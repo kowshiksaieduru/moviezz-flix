@@ -154,6 +154,17 @@ def reset_password_direct(username: str, new_password: str) -> bool:
         )
     return cur.rowcount > 0
 
+def delete_user_account(username: str):
+    """Permanently deletes user and all their records so Admin Dashboard updates immediately."""
+    if username.lower() == "admin":
+        return
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM users WHERE username = ? COLLATE NOCASE", (username,))
+        conn.execute("DELETE FROM user_preferences WHERE username = ? COLLATE NOCASE", (username,))
+        conn.execute("DELETE FROM continue_watching WHERE username = ? COLLATE NOCASE", (username,))
+        conn.execute("DELETE FROM watchlist WHERE username = ? COLLATE NOCASE", (username,))
+        conn.execute("DELETE FROM reviews WHERE username = ? COLLATE NOCASE", (username,))
+
 # Preferences Helpers
 def save_user_preferences(username: str, genres: list[str], languages: list[str]):
     with get_db_connection() as conn:
@@ -392,6 +403,9 @@ if "party_room" not in st.session_state:
 
 if "show_admin_panel" not in st.session_state:
     st.session_state.show_admin_panel = False
+
+if "confirm_delete_account" not in st.session_state:
+    st.session_state.confirm_delete_account = False
 
 # ---------------- CLASSIC CINEMATIC CSS ----------------
 
@@ -716,7 +730,7 @@ except FileNotFoundError:
     st.error("`movies.csv` file not found!")
     st.stop()
 
-# ---------------- SIDEBAR (PROFILE, WATCH PARTY, WATCHLIST, ADMIN & ADD MOVIE) ----------------
+# ---------------- SIDEBAR (PROFILE, LOGOUT, DELETE ACCOUNT FOR USERS ONLY, WATCH PARTY, WATCHLIST) ----------------
 
 user_watchlist = get_watchlist(current_user)
 cw_list = get_continue_watching(current_user)
@@ -733,7 +747,7 @@ with st.sidebar:
     s_col2.metric("⏯️ Active", len(cw_list))
     s_col3.metric("⭐ Rated", rev_count)
 
-    # Admin Dashboard Toggle (Visible for 'admin' user)
+    # Admin vs Regular User Controls
     if current_user.lower() == "admin":
         btn_lbl = "🎬 Browse Movies" if st.session_state.show_admin_panel else "📊 Admin Analytics"
         if st.button(btn_lbl, use_container_width=True):
@@ -745,6 +759,7 @@ with st.sidebar:
             st.session_state.onboarding_step = 1
             st.rerun()
 
+    # Logout Button (For Both Admin & Users)
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state.logged_in_user = None
         st.session_state.selected_movie = None
@@ -752,10 +767,38 @@ with st.sidebar:
         st.session_state.resume_seconds = 0
         st.session_state.party_room = None
         st.session_state.show_admin_panel = False
+        st.session_state.confirm_delete_account = False
         st.session_state.auth_page = "login"
         if "prefs_initialized" in st.session_state:
             del st.session_state.prefs_initialized
         st.rerun()
+
+    # Delete Account Button (ONLY FOR REGULAR USERS, NOT ADMIN)
+    if current_user.lower() != "admin":
+        if st.button("🗑️ Delete Account", use_container_width=True):
+            st.session_state.confirm_delete_account = not st.session_state.confirm_delete_account
+            st.rerun()
+
+        if st.session_state.confirm_delete_account:
+            st.warning("Are you sure? Your account & history will be permanently deleted.")
+            del_c1, del_c2 = st.columns(2)
+            with del_c1:
+                if st.button("✅ Yes, Delete", key="confirm_del_yes", use_container_width=True):
+                    delete_user_account(current_user)
+                    st.session_state.logged_in_user = None
+                    st.session_state.selected_movie = None
+                    st.session_state.is_playing = False
+                    st.session_state.resume_seconds = 0
+                    st.session_state.party_room = None
+                    st.session_state.confirm_delete_account = False
+                    st.session_state.auth_page = "login"
+                    if "prefs_initialized" in st.session_state:
+                        del st.session_state.prefs_initialized
+                    st.rerun()
+            with del_c2:
+                if st.button("❌ Cancel", key="confirm_del_no", use_container_width=True):
+                    st.session_state.confirm_delete_account = False
+                    st.rerun()
 
     st.divider()
     with st.expander("👥 Watch Party (Sync with Friends)", expanded=bool(st.session_state.party_room)):
@@ -825,18 +868,33 @@ with st.sidebar:
         with st.form("add_movie_form", clear_on_submit=True):
             m_name = st.text_input("Movie Title *")
             m_genre = st.text_input("Genres (e.g. Horror, Thriller) *")
-            m_te = st.text_input("Telugu Video URL")
-            m_hi = st.text_input("Hindi Video URL")
-            m_ta = st.text_input("Tamil Video URL")
-            m_en = st.text_input("English Video URL")
-            if st.form_submit_button("Add Movie", use_container_width=True):
-                if not m_name.strip() or not m_genre.strip():
+            m_te = st.text_input("Telugu Video / YouTube URL")
+            m_hi = st.text_input("Hindi Video / YouTube URL")
+            m_ta = st.text_input("Tamil Video / YouTube URL")
+            m_en = st.text_input("English Video / YouTube URL")
+            if st.form_submit_button("Add & Open Movie 🚀", use_container_width=True):
+                clean_title = m_name.strip()
+                clean_genre = m_genre.strip()
+                if not clean_title or not clean_genre:
                     st.warning("Title and Genre are required.")
-                elif m_name.strip().lower() in movies["title"].str.lower().values:
+                elif clean_title.lower() in movies["title"].str.lower().values:
                     st.error("Movie already exists!")
                 else:
-                    append_movie_to_csv(m_name, m_genre, m_te, m_hi, m_ta, m_en)
-                    st.success(f"Added '{m_name}'!")
+                    append_movie_to_csv(clean_title, clean_genre, m_te, m_hi, m_ta, m_en)
+                    # Automatically open & play the newly added movie
+                    st.session_state.selected_movie = clean_title
+                    if m_te.strip():
+                        st.session_state.selected_lang = "Telugu"
+                    elif m_hi.strip():
+                        st.session_state.selected_lang = "Hindi"
+                    elif m_ta.strip():
+                        st.session_state.selected_lang = "Tamil"
+                    elif m_en.strip():
+                        st.session_state.selected_lang = "English"
+                    st.session_state.resume_seconds = 0
+                    st.session_state.is_playing = True
+                    st.session_state.show_admin_panel = False
+                    st.toast(f"Added & Playing '{clean_title}'!")
                     st.rerun()
 
 # ---------------- ADMIN ANALYTICS VIEW (DEFAULT FOR ADMIN) ----------------
@@ -1020,8 +1078,8 @@ if active_movie:
                     st.caption(f"🔊 Playing in **{chosen_lang}**")
                 st.video(video_url, start_time=start_sec, autoplay=True)
             else:
-                st.info(f"Direct video not in catalog for {active_movie} ({chosen_lang}).")
-                st.link_button(f"🔎 Watch {active_movie} ({chosen_lang}) on YouTube", yt_full_search)
+                st.info(f"Direct video URL not provided yet for **{active_movie}** ({chosen_lang}). Watch directly via YouTube below:")
+                st.link_button(f"▶️ Watch {active_movie} ({chosen_lang}) on YouTube", yt_full_search, use_container_width=True)
 
         if chat_col:
             with chat_col:
