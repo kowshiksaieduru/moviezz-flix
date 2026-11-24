@@ -1,4 +1,5 @@
 import os
+import csv
 import hmac
 import hashlib
 import secrets
@@ -15,7 +16,15 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
+
+# Support both local .env and Streamlit Cloud st.secrets
 API_KEY = os.getenv("OMDB_API_KEY")
+if not API_KEY:
+    try:
+        API_KEY = st.secrets.get("OMDB_API_KEY")
+    except Exception:
+        API_KEY = None
+
 DB_PATH = BASE_DIR / "users.db"
 CSV_PATH = BASE_DIR / "movies.csv"
 
@@ -32,7 +41,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# ---------------- DATABASE & AUTH ----------------
+# ---------------- DATABASE (AUTH, WATCHLIST & REVIEWS) ----------------
 
 def get_db_connection():
     return sqlite3.connect(DB_PATH)
@@ -52,6 +61,17 @@ def init_database():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL,
                 movie_title TEXT NOT NULL,
+                UNIQUE(username, movie_title)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                movie_title TEXT NOT NULL,
+                rating INTEGER NOT NULL,
+                comment TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(username, movie_title)
             )
         """)
@@ -91,6 +111,7 @@ def verify_user(username: str, password: str) -> bool:
     entered_hash = hash_password(password, salt)
     return hmac.compare_digest(entered_hash, stored_hash)
 
+# Watchlist helpers
 def add_to_watchlist(username: str, movie_title: str):
     with get_db_connection() as conn:
         conn.execute(
@@ -112,6 +133,36 @@ def remove_from_watchlist(username: str, movie_title: str):
             "DELETE FROM watchlist WHERE username = ? AND movie_title = ?",
             (username, movie_title)
         )
+
+# Reviews & Ratings helpers
+def save_review(username: str, movie_title: str, rating: int, comment: str):
+    with get_db_connection() as conn:
+        conn.execute("""
+            INSERT INTO reviews (username, movie_title, rating, comment)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(username, movie_title)
+            DO UPDATE SET rating=excluded.rating, comment=excluded.comment, created_at=CURRENT_TIMESTAMP
+        """, (username, movie_title, rating, comment.strip()))
+
+def get_movie_reviews(movie_title: str):
+    with get_db_connection() as conn:
+        rows = conn.execute("""
+            SELECT username, rating, comment
+            FROM reviews
+            WHERE movie_title = ?
+            ORDER BY created_at DESC
+        """, (movie_title,)).fetchall()
+    return rows
+
+def get_average_rating(movie_title: str):
+    with get_db_connection() as conn:
+        res = conn.execute(
+            "SELECT AVG(rating), COUNT(*) FROM reviews WHERE movie_title = ?",
+            (movie_title,)
+        ).fetchone()
+    if res and res[1] > 0:
+        return round(res[0], 1), res[1]
+    return None, 0
 
 init_database()
 
@@ -162,7 +213,7 @@ h1, h2, h3, h4, p, label, span {
     letter-spacing: 2px;
 }
 .hero {
-    padding: 70px 45px;
+    padding: 65px 45px;
     margin-top: 15px;
     border-radius: 12px;
     background:
@@ -190,11 +241,54 @@ h1, h2, h3, h4, p, label, span {
 div[data-testid="stImage"] img {
     border-radius: 9px;
 }
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    border-color: #2a2a2a !important;
+    background-color: #121212;
+    border-radius: 10px;
+}
 hr {
     border-color: #333;
 }
 </style>
 """, unsafe_allow_html=True)
+
+# ---------------- DATA & API HELPERS ----------------
+
+@st.cache_data(ttl=3600)
+def get_movie_details(title: str):
+    if not API_KEY:
+        return None
+    try:
+        response = requests.get(
+            "https://www.omdbapi.com/",
+            params={"apikey": API_KEY, "t": title, "plot": "short"},
+            timeout=8
+        )
+        data = response.json()
+        return data if data.get("Response") == "True" else None
+    except requests.RequestException:
+        return None
+
+@st.cache_data
+def load_movies():
+    df = pd.read_csv(CSV_PATH)
+    df["title"] = df["title"].astype(str).str.strip()
+    df["genre"] = df["genre"].fillna("").astype(str)
+    for col in LANG_COLUMNS.values():
+        if col not in df.columns:
+            df[col] = ""
+        else:
+            df[col] = df[col].fillna("").astype(str).str.strip()
+    return df
+
+def append_movie_to_csv(title: str, genre: str, te_url: str, hi_url: str, ta_url: str, en_url: str):
+    file_exists = CSV_PATH.exists()
+    with open(CSV_PATH, mode="a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["title", "genre", "telugu_url", "hindi_url", "tamil_url", "english_url"])
+        writer.writerow([title.strip(), genre.strip(), te_url.strip(), hi_url.strip(), ta_url.strip(), en_url.strip()])
+    load_movies.clear()
 
 # ---------------- LOGIN / SIGNUP GATE ----------------
 
@@ -246,7 +340,17 @@ if st.session_state.logged_in_user is None:
 
     st.stop()
 
-# ---------------- SIDEBAR (USER & WATCHLIST) ----------------
+# Load Movies Dataset
+try:
+    movies = load_movies()
+except FileNotFoundError:
+    st.error("`movies.csv` file not found!")
+    st.stop()
+except Exception as e:
+    st.error(f"Dataset error: {e}")
+    st.stop()
+
+# ---------------- SIDEBAR (USER, WATCHLIST & ADD MOVIE) ----------------
 
 current_user = st.session_state.logged_in_user
 
@@ -277,43 +381,26 @@ with st.sidebar:
     else:
         st.caption("Your watchlist is empty. Add movies to watch later!")
 
-# ---------------- DATA & API HELPERS ----------------
+    st.divider()
+    with st.expander("➕ Add New Movie to Catalog"):
+        with st.form("add_movie_form", clear_on_submit=True):
+            m_name = st.text_input("Movie Title *")
+            m_genre = st.text_input("Genres (e.g. Action, Drama) *")
+            m_te = st.text_input("Telugu YouTube URL")
+            m_hi = st.text_input("Hindi YouTube URL")
+            m_ta = st.text_input("Tamil YouTube URL")
+            m_en = st.text_input("English YouTube URL")
+            if st.form_submit_button("Add Movie", use_container_width=True):
+                if not m_name.strip() or not m_genre.strip():
+                    st.warning("Title and Genre are required.")
+                elif m_name.strip().lower() in movies["title"].str.lower().values:
+                    st.error("Movie already exists!")
+                else:
+                    append_movie_to_csv(m_name, m_genre, m_te, m_hi, m_ta, m_en)
+                    st.success(f"Added '{m_name}'!")
+                    st.rerun()
 
-@st.cache_data(ttl=3600)
-def get_movie_details(title: str):
-    if not API_KEY:
-        return None
-    try:
-        response = requests.get(
-            "https://www.omdbapi.com/",
-            params={"apikey": API_KEY, "t": title, "plot": "short"},
-            timeout=8
-        )
-        data = response.json()
-        return data if data.get("Response") == "True" else None
-    except requests.RequestException:
-        return None
-
-@st.cache_data
-def load_movies():
-    df = pd.read_csv(CSV_PATH)
-    df["title"] = df["title"].astype(str).str.strip()
-    df["genre"] = df["genre"].fillna("").astype(str)
-    for col in LANG_COLUMNS.values():
-        if col not in df.columns:
-            df[col] = ""
-        else:
-            df[col] = df[col].fillna("").astype(str).str.strip()
-    return df
-
-try:
-    movies = load_movies()
-except FileNotFoundError:
-    st.error("`movies.csv` file not found!")
-    st.stop()
-except Exception as e:
-    st.error(f"Dataset error: {e}")
-    st.stop()
+# ---------------- RECOMMENDATION & LANGUAGE HELPERS ----------------
 
 def get_available_languages(movie_row: pd.Series) -> dict[str, str]:
     available = {}
@@ -354,12 +441,12 @@ st.markdown("""
 <div class="hero">
     <h1>Unlimited Movies.<br>In Your Favourite Language.</h1>
     <p style="font-size:18px; color:#ddd !important;">
-        Switch seamlessly between Telugu, Hindi, Tamil & English audio streams.
+        Stream in Telugu, Hindi, Tamil & English • Rate Movies • Build Your Watchlist.
     </p>
 </div>
 """, unsafe_allow_html=True)
 
-# ---------------- ACTIVE MOVIE PLAYER & LANGUAGE SWITCHER ----------------
+# ---------------- ACTIVE MOVIE PLAYER, LANGUAGE SWITCHER & REVIEWS ----------------
 
 active_movie = st.session_state.selected_movie
 
@@ -380,7 +467,6 @@ if active_movie:
     # Language Selector Bar
     if available_langs:
         lang_options = list(available_langs.keys())
-        # Default to previously chosen language if available for this movie, else first available
         default_idx = lang_options.index(st.session_state.selected_lang) if st.session_state.selected_lang in lang_options else 0
 
         chosen_lang = st.radio(
@@ -402,7 +488,7 @@ if active_movie:
             st.caption(f"🔊 Now Playing in **{chosen_lang}**")
             st.video(active_video_url, autoplay=True)
         else:
-            st.warning(f"Video link not found in `movies.csv` for {active_movie}.")
+            st.warning(f"Video link not added yet for {active_movie}.")
             yt_search = f"https://www.youtube.com/results?search_query={quote_plus(f'{active_movie} {chosen_lang} trailer')}"
             st.link_button(f"🔎 Search {chosen_lang} on YouTube", yt_search)
 
@@ -439,6 +525,10 @@ if active_movie:
             yt_fallback = active_video_url if active_video_url else f"https://www.youtube.com/results?search_query={quote_plus(f'{active_movie} {chosen_lang}')}"
             st.link_button("📺 Open YouTube", yt_fallback, use_container_width=True)
 
+        avg_rating, rating_count = get_average_rating(active_movie)
+        user_rating_text = f"⭐ {avg_rating}/5 ({rating_count} reviews)" if avg_rating else "No user ratings yet"
+        st.write(f"**👥 MOVIEZZ FLIX Rating:** {user_rating_text}")
+
         if available_langs:
             st.write(f"**🌐 Available Languages:** {', '.join(available_langs.keys())}")
 
@@ -451,6 +541,30 @@ if active_movie:
             st.write(details.get("Plot", "N/A"))
         elif not movie_df_match.empty:
             st.write(f"**🎭 Genre:** {movie_df_match['genre'].iloc[0]}")
+
+    # User Ratings & Reviews Section
+    st.markdown("### ⭐ Rate & Review This Movie")
+    rev_col1, rev_col2 = st.columns([1, 1.5])
+
+    with rev_col1:
+        with st.form(f"review_form_{active_movie}"):
+            star_rating = st.slider("Your Rating (Stars)", min_value=1, max_value=5, value=5)
+            review_text = st.text_area("Write a short review (optional)", placeholder="Super mass movie! Must watch...")
+            if st.form_submit_button("Submit Review", use_container_width=True):
+                save_review(current_user, active_movie, star_rating, review_text)
+                st.success("Thanks! Your review has been saved.")
+                st.rerun()
+
+    with rev_col2:
+        all_reviews = get_movie_reviews(active_movie)
+        if all_reviews:
+            for r_user, r_stars, r_comment in all_reviews[:5]:
+                with st.container(border=True):
+                    st.markdown(f"**@{r_user}** — {'⭐' * r_stars} ({r_stars}/5)")
+                    if r_comment:
+                        st.write(r_comment)
+        else:
+            st.info("Be the first to rate and review this movie!")
 
     # Recommendations Section
     st.markdown("### 🍿 Similar Movies You Might Like")
@@ -538,7 +652,6 @@ with filter_col3:
         label_visibility="collapsed"
     )
 
-# Apply Genre & Language Filters
 filtered_movies = movies.copy()
 
 if selected_genre != "All Genres":
@@ -555,6 +668,7 @@ for idx, (_, row) in enumerate(filtered_movies.iterrows()):
     m_title = row["title"]
     m_data = get_movie_details(m_title)
     m_langs = list(get_available_languages(row).keys())
+    avg_r, _ = get_average_rating(m_title)
 
     with grid_cols[idx % 4]:
         with st.container(border=True):
@@ -564,6 +678,8 @@ for idx, (_, row) in enumerate(filtered_movies.iterrows()):
             st.caption(f"🎭 {row['genre']}")
             if m_langs:
                 st.caption(f"🌐 {' • '.join(m_langs)}")
+            if avg_r:
+                st.caption(f"⭐ User Rating: {avg_r}/5")
             if st.button("▶ Watch Movie", key=f"browse_{m_title}_{idx}", use_container_width=True):
                 st.session_state.selected_movie = m_title
                 st.session_state.is_playing = True
