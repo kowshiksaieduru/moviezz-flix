@@ -510,8 +510,9 @@ def get_movie_details(title: str):
         return None
 
 @st.cache_data
+@st.cache_data
 def load_movies():
-    df = pd.read_csv(CSV_PATH)
+    df = pd.read_csv(CSV_PATH, on_bad_lines="skip")
     df["title"] = df["title"].astype(str).str.strip()
     df["genre"] = df["genre"].fillna("").astype(str)
     for col in LANG_COLUMNS.values():
