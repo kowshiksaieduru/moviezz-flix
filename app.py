@@ -4,7 +4,7 @@ import random
 import hashlib
 import sqlite3
 from pathlib import Path
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, unquote_plus
 
 import pandas as pd
 import requests
@@ -39,21 +39,13 @@ AVAILABLE_GENRES = [
 ]
 
 AVAILABLE_CATEGORIES = ["Movie", "Web Series", "Serial", "Jabardasth"]
-
 AVAILABLE_LANGUAGES = ["Telugu", "Hindi", "Tamil", "English"]
-
-MOOD_FILTERS = {
-    "All Moods": [],
-    "🔥 Mass & Action": ["Action", "Crime"],
-    "😱 Goosebumps & Scares": ["Horror", "Thriller"],
-    "🧠 Mind-Bending": ["Sci-Fi", "Adventure", "Fantasy"],
-    "😂 Comedy & Chill": ["Comedy", "Drama", "Romance"]
-}
 
 st.set_page_config(
     page_title="MOVIEZZ FLIX",
     page_icon="🎬",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
 # ---------------- FAST DATABASE ----------------
@@ -166,7 +158,6 @@ def delete_user_account(username: str):
         conn.execute("DELETE FROM watchlist WHERE username = ? COLLATE NOCASE", (username,))
         conn.execute("DELETE FROM reviews WHERE username = ? COLLATE NOCASE", (username,))
 
-# Preferences Helpers
 def save_user_preferences(username: str, genres: list[str], languages: list[str]):
     with get_db_connection() as conn:
         conn.execute("""
@@ -188,7 +179,6 @@ def get_user_preferences(username: str):
         return genres, langs
     return None, None
 
-# Continue Watching Helpers
 def upsert_continue_watching(username: str, movie_title: str, language: str, progress_mins: int = 0):
     with get_db_connection() as conn:
         conn.execute("""
@@ -234,7 +224,6 @@ def remove_continue_watching(username: str, movie_title: str):
             (username, movie_title)
         )
 
-# Watchlist Helpers
 def add_to_watchlist(username: str, movie_title: str):
     with get_db_connection() as conn:
         conn.execute(
@@ -257,7 +246,6 @@ def remove_from_watchlist(username: str, movie_title: str):
             (username, movie_title)
         )
 
-# Reviews & Top Rated Helpers
 def save_review(username: str, movie_title: str, rating: int, comment: str):
     with get_db_connection() as conn:
         conn.execute("""
@@ -291,7 +279,6 @@ def get_user_review_count(username: str) -> int:
         res = conn.execute("SELECT COUNT(*) FROM reviews WHERE username = ?", (username,)).fetchone()
     return res[0] if res else 0
 
-# Watch Party Helpers
 def create_or_update_party(room_code: str, host_user: str, movie_title: str, language: str, mins: int = 0):
     with get_db_connection() as conn:
         conn.execute("""
@@ -322,7 +309,6 @@ def get_party_messages(room_code: str):
             (room_code.upper(),)
         ).fetchall()
 
-# Admin Analytics Helpers
 def get_admin_analytics():
     with get_db_connection() as conn:
         total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -359,155 +345,277 @@ init_database()
 
 # ---------------- SESSION STATE ----------------
 
-if "logged_in_user" not in st.session_state:
-    st.session_state.logged_in_user = None
+for key, default in [
+    ("logged_in_user", None),
+    ("selected_movie", None),
+    ("is_playing", False),
+    ("selected_lang", "Telugu"),
+    ("resume_seconds", 0),
+    ("onboarding_step", 1),
+    ("temp_genres", []),
+    ("editing_prefs", False),
+    ("auth_page", "login"),
+    ("active_tab", "All"),
+    ("party_room", None),
+    ("show_admin_panel", False),
+    ("confirm_delete_account", False),
+]:
+    if key not in st.session_state:
+        st.session_state[key] = default
 
-if "selected_movie" not in st.session_state:
-    st.session_state.selected_movie = None
-
-if "is_playing" not in st.session_state:
-    st.session_state.is_playing = False
-
-if "selected_lang" not in st.session_state:
-    st.session_state.selected_lang = "Telugu"
-
-if "resume_seconds" not in st.session_state:
-    st.session_state.resume_seconds = 0
-
-if "onboarding_step" not in st.session_state:
-    st.session_state.onboarding_step = 1
-
-if "temp_genres" not in st.session_state:
-    st.session_state.temp_genres = []
-
-if "editing_prefs" not in st.session_state:
-    st.session_state.editing_prefs = False
-
-if "auth_page" not in st.session_state:
-    st.session_state.auth_page = "login"
-
-if "active_mood" not in st.session_state:
-    st.session_state.active_mood = "All Moods"
-
-if "party_room" not in st.session_state:
-    st.session_state.party_room = None
-
-if "show_admin_panel" not in st.session_state:
-    st.session_state.show_admin_panel = False
-
-if "confirm_delete_account" not in st.session_state:
-    st.session_state.confirm_delete_account = False
-
-# ---------------- CLASSIC CINEMATIC + HORIZONTAL SLIDER CSS ----------------
+# ---------------- JIOHOTSTAR DEEP NAVY & ROYAL BLUE OTT THEME ----------------
 
 st.markdown("""
 <style>
+/* Deep JioHotstar Midnight Navy Background */
 .stApp {
-    background:
-        radial-gradient(circle at 50% 20%, rgba(229, 9, 20, 0.22), rgba(10, 10, 15, 0.92) 55%, #050508 100%),
-        linear-gradient(to bottom, rgba(5, 5, 10, 0.72), rgba(5, 5, 10, 0.95)),
-        url("https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&w=1920&q=80");
-    background-size: cover;
-    background-position: center;
-    background-attachment: fixed;
-    color: white;
+    background: radial-gradient(circle at 50% 0%, #141c33 0%, #0b0e17 55%, #07090f 100%);
+    color: #ffffff;
 }
 header[data-testid="stHeader"] {
-    background: transparent;
+    background: rgba(11, 14, 23, 0.75);
+    backdrop-filter: blur(10px);
 }
 .block-container {
-    padding-top: 1.2rem;
-    max-width: 1400px;
+    padding-top: 1rem !important;
+    padding-bottom: 3rem !important;
+    max-width: 1440px;
 }
 h1, h2, h3, h4, p, label, span {
-    color: white !important;
+    color: #ffffff !important;
 }
-.navbar {
+
+/* JioHotstar Top Bar */
+.hotstar-nav {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: rgba(12, 12, 18, 0.85);
-    backdrop-filter: blur(10px);
-    padding: 15px 25px;
-    border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-}
-.logo {
-    color: #e50914;
-    font-size: 30px;
-    font-weight: 900;
-    letter-spacing: 3px;
-    text-shadow: 0 0 18px rgba(229, 9, 20, 0.55);
-}
-.hero {
-    padding: 36px 32px;
-    margin-top: 15px;
+    padding: 12px 20px;
+    background: linear-gradient(90deg, rgba(16, 22, 40, 0.95), rgba(20, 30, 58, 0.85));
     border-radius: 14px;
-    background:
-        linear-gradient(90deg, rgba(8,8,12,0.95), rgba(8,8,12,0.65), rgba(229,9,20,0.18)),
-        url("https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1600&q=80");
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 14px;
+}
+.hotstar-brand {
+    font-size: 26px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    background: linear-gradient(90deg, #ffffff 0%, #3b82f6 60%, #e50914 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.hotstar-badge {
+    background: rgba(59, 130, 246, 0.18);
+    border: 1px solid rgba(59, 130, 246, 0.45);
+    color: #93c5fd !important;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+/* JioHotstar Spotlight Banner */
+.spotlight-card {
+    position: relative;
+    border-radius: 18px;
+    overflow: hidden;
+    background: linear-gradient(90deg, #0b0e17 0%, rgba(11, 14, 23, 0.88) 48%, rgba(11, 14, 23, 0.25) 100%),
+                url("https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&w=1600&q=80");
     background-size: cover;
     background-position: center;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 36px 32px;
+    margin-bottom: 16px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.65);
 }
-.hero h1 {
+.spotlight-tag {
+    display: inline-block;
+    background: linear-gradient(90deg, #2563eb, #1d4ed8);
+    color: #fff !important;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    padding: 4px 12px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+}
+.spotlight-title {
     font-size: 36px;
     font-weight: 900;
+    margin: 0 0 8px 0;
+    line-height: 1.15;
 }
-.stButton > button {
-    background: linear-gradient(135deg, #e50914, #b20710);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-weight: bold;
-    letter-spacing: 0.4px;
-    box-shadow: 0 4px 14px rgba(229, 9, 20, 0.35);
+.spotlight-meta {
+    color: #cbd5e1 !important;
+    font-size: 14px;
+    margin-bottom: 18px;
 }
-.stButton > button:hover {
-    background: linear-gradient(135deg, #ff1e27, #c90812);
-    box-shadow: 0 6px 20px rgba(229, 9, 20, 0.55);
+
+/* TRUE JIOHOTSTAR HORIZONTAL TOUCH-SWIPE POSTER RAIL */
+.rail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 18px 0 10px 2px;
 }
-div[data-testid="stImage"] img {
-    border-radius: 9px;
+.rail-title {
+    font-size: 20px;
+    font-weight: 800;
+    color: #f8fafc !important;
+    letter-spacing: 0.3px;
 }
-div[data-testid="stVerticalBlockBorderWrapper"] {
-    border-color: rgba(255, 255, 255, 0.14) !important;
-    background: rgba(15, 15, 22, 0.82) !important;
-    backdrop-filter: blur(14px);
-    border-radius: 14px;
-    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.65);
+.rail-hint {
+    font-size: 12px;
+    color: #94a3b8 !important;
 }
-/* Horizontal Sliding Row Styling */
-div[data-testid="stHorizontalBlock"]:has(.slide-card-marker) {
-    display: flex !important;
-    flex-direction: row !important;
-    flex-wrap: nowrap !important;
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-    gap: 14px !important;
-    padding-bottom: 14px !important;
+.poster-rail {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 14px;
+    padding: 6px 4px 16px 4px;
     scroll-snap-type: x mandatory;
     -webkit-overflow-scrolling: touch;
 }
-div[data-testid="stHorizontalBlock"]:has(.slide-card-marker) > div[data-testid="column"] {
-    min-width: 230px !important;
-    max-width: 230px !important;
-    flex: 0 0 230px !important;
+.poster-rail::-webkit-scrollbar {
+    height: 6px;
+}
+.poster-rail::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+}
+.poster-rail::-webkit-scrollbar-thumb {
+    background: rgba(59, 130, 246, 0.7);
+    border-radius: 10px;
+}
+.poster-tile {
+    flex: 0 0 155px;
+    width: 155px;
     scroll-snap-align: start;
+    text-decoration: none !important;
+    position: relative;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #13192b;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+    display: block;
 }
-div[data-testid="stHorizontalBlock"]:has(.slide-card-marker)::-webkit-scrollbar {
-    height: 7px;
+@media (min-width: 768px) {
+    .poster-tile {
+        flex: 0 0 190px;
+        width: 190px;
+    }
 }
-div[data-testid="stHorizontalBlock"]:has(.slide-card-marker)::-webkit-scrollbar-track {
-    background: rgba(255, 255, 255, 0.06);
+.poster-tile:hover {
+    transform: scale(1.05);
+    border-color: #3b82f6;
+    box-shadow: 0 10px 26px rgba(37, 99, 235, 0.45);
+    z-index: 5;
+}
+.poster-img-wrap {
+    position: relative;
+    width: 100%;
+    height: 225px;
+    overflow: hidden;
+}
+@media (min-width: 768px) {
+    .poster-img-wrap {
+        height: 270px;
+    }
+}
+.poster-img-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.poster-gradient {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to top, rgba(11, 14, 23, 0.98) 0%, rgba(11, 14, 23, 0.35) 45%, transparent 100%);
+}
+.lang-pill {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(6px);
+    color: #93c5fd !important;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+}
+.play-badge {
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    color: white !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.6);
+}
+.poster-info {
+    padding: 10px 10px 12px 10px;
+}
+.poster-name {
+    font-size: 14px;
+    font-weight: 800;
+    color: #ffffff !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 3px;
+}
+.poster-sub {
+    font-size: 11px;
+    color: #94a3b8 !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.progress-bar-bg {
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.15);
+    margin-top: 6px;
+    border-radius: 4px;
+    overflow: hidden;
+}
+.progress-bar-fill {
+    height: 100%;
+    background: #3b82f6;
+}
+
+/* Buttons */
+.stButton > button {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    color: white;
+    border: none;
     border-radius: 10px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
 }
-div[data-testid="stHorizontalBlock"]:has(.slide-card-marker)::-webkit-scrollbar-thumb {
-    background: #e50914;
-    border-radius: 10px;
+.stButton > button:hover {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    box-shadow: 0 6px 20px rgba(59, 130, 246, 0.55);
 }
-hr {
-    border-color: rgba(255, 255, 255, 0.12);
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    background: rgba(17, 23, 40, 0.85) !important;
+    backdrop-filter: blur(12px);
+    border-radius: 14px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -561,19 +669,17 @@ def append_movie_to_csv(title: str, category: str, genre: str, te_url: str, hi_u
         writer.writerow([title.strip(), category.strip(), genre.strip(), te_url.strip(), hi_url.strip(), ta_url.strip(), en_url.strip()])
     load_movies.clear()
 
-# ---------------- LOGIN / SIGNUP / SEPARATE FORGOT PASSWORD PAGE ----------------
+# ---------------- LOGIN / SIGNUP / FORGOT PASSWORD ----------------
 
 if st.session_state.logged_in_user is None:
     st.markdown("""
         <div style="text-align:center; margin-top:25px; margin-bottom:15px;">
-            <span style="background:rgba(229,9,20,0.18); border:1px solid rgba(229,9,20,0.5); color:#ff4d56; padding:5px 14px; border-radius:20px; font-size:12px; letter-spacing:2px; font-weight:700;">
-                PREMIUM STREAMING EXPERIENCE
-            </span>
-            <h1 style="color:#e50914 !important; font-size:54px; font-weight:900; letter-spacing:4px; margin:10px 0 4px 0; text-shadow: 0 4px 25px rgba(229,9,20,0.5);">
+            <span class="hotstar-badge">JIOHOTSTAR STYLE STREAMING</span>
+            <h1 style="font-size:48px; font-weight:900; letter-spacing:3px; margin:12px 0 4px 0;">
                 MOVIEZZ FLIX
             </h1>
-            <p style="color:#d0d0d8 !important; font-size:17px; letter-spacing:0.5px;">
-                Movies • Web Series • TV Serials • Jabardasth • Watch Party
+            <p style="color:#94a3b8 !important; font-size:16px;">
+                Blockbuster Movies • Web Series • Daily Serials • Jabardasth
             </p>
         </div>
     """, unsafe_allow_html=True)
@@ -631,8 +737,6 @@ if st.session_state.logged_in_user is None:
 
             elif st.session_state.auth_page == "forgot":
                 st.markdown("### 🔄 Reset Your Password")
-                st.caption("Enter your username and set a new password to recover your account.")
-
                 with st.form("reset_form"):
                     reset_user = st.text_input("Username", placeholder="Enter your registered username")
                     new_pass = st.text_input("New Password (min 4 chars)", type="password")
@@ -645,7 +749,7 @@ if st.session_state.logged_in_user is None:
                         elif new_pass != confirm_new_pass:
                             st.error("Passwords do not match.")
                         elif reset_password_direct(reset_user.strip(), new_pass):
-                            st.success("✅ Password updated successfully! Click 'Back to Sign In' below.")
+                            st.success("✅ Password updated successfully!")
                         else:
                             st.error("Username not found.")
 
@@ -666,12 +770,7 @@ if current_user.lower() == "admin" and (saved_genres is None or saved_langs is N
 # ---------------- 2-STEP PREFERENCE ONBOARDING WIZARD ----------------
 
 if saved_genres is None or saved_langs is None or st.session_state.editing_prefs:
-    st.markdown("""
-        <h1 style="text-align:center; color:#e50914 !important; margin-top:10px;">
-            MOVIEZZ FLIX
-        </h1>
-    """, unsafe_allow_html=True)
-
+    st.markdown("<h1 style='text-align:center;'>MOVIEZZ FLIX</h1>", unsafe_allow_html=True)
     _, center_box, _ = st.columns([1, 2, 1])
 
     with center_box:
@@ -679,30 +778,14 @@ if saved_genres is None or saved_langs is None or st.session_state.editing_prefs
             if st.session_state.onboarding_step == 1:
                 st.progress(50, text="Step 1 of 2: Choose Your Favourite Genres")
                 st.markdown(f"### 👋 Welcome, {current_user}! What do you love watching?")
-
-                genre_icons = {
-                    "Action": "💥 Action",
-                    "Thriller": "🔪 Thriller",
-                    "Horror": "👻 Horror",
-                    "Drama": "🎭 Drama",
-                    "Comedy": "😂 Comedy",
-                    "Crime": "🕵️ Crime",
-                    "Sci-Fi": "🚀 Sci-Fi",
-                    "Adventure": "🧭 Adventure",
-                    "Fantasy": "🧙 Fantasy",
-                    "Romance": "❤️ Romance"
-                }
-
                 default_g = saved_genres if saved_genres else ["Action", "Comedy", "Drama"]
                 chosen_genres = []
-
                 g_cols = st.columns(2)
                 for i, g in enumerate(AVAILABLE_GENRES):
                     with g_cols[i % 2]:
-                        if st.checkbox(genre_icons.get(g, g), value=(g in default_g), key=f"onb_g_{g}"):
+                        if st.checkbox(g, value=(g in default_g), key=f"onb_g_{g}"):
                             chosen_genres.append(g)
 
-                st.write("")
                 if st.button("Next: Choose Languages ➡️", use_container_width=True):
                     if not chosen_genres:
                         st.warning("Select at least one genre!")
@@ -714,24 +797,14 @@ if saved_genres is None or saved_langs is None or st.session_state.editing_prefs
             elif st.session_state.onboarding_step == 2:
                 st.progress(100, text="Step 2 of 2: Choose Your Preferred Languages")
                 st.markdown("### 🌐 Which languages do you prefer?")
-
-                lang_icons = {
-                    "Telugu": "🎬 Telugu (తెలుగు)",
-                    "Hindi": "🎬 Hindi (हिन्दी)",
-                    "Tamil": "🎬 Tamil (தமிழ்)",
-                    "English": "🎬 English"
-                }
-
                 default_l = saved_langs if saved_langs else ["Telugu", "English"]
                 chosen_langs = []
-
                 l_cols = st.columns(2)
                 for i, l in enumerate(AVAILABLE_LANGUAGES):
                     with l_cols[i % 2]:
-                        if st.checkbox(lang_icons.get(l, l), value=(l in default_l), key=f"onb_l_{l}"):
+                        if st.checkbox(l, value=(l in default_l), key=f"onb_l_{l}"):
                             chosen_langs.append(l)
 
-                st.write("")
                 nav_col1, nav_col2 = st.columns(2)
                 with nav_col1:
                     if st.button("⬅️ Back", use_container_width=True):
@@ -759,6 +832,23 @@ try:
 except FileNotFoundError:
     st.error("`movies.csv` file not found!")
     st.stop()
+
+# ---------------- HANDLE POSTER TAP VIA URL QUERY PARAMS ----------------
+
+if "watch" in st.query_params:
+    tapped_title = unquote_plus(st.query_params["watch"])
+    tapped_lang = st.query_params.get("lang", saved_langs[0])
+    del st.query_params["watch"]
+    if "lang" in st.query_params:
+        del st.query_params["lang"]
+
+    if tapped_title in movies["title"].values:
+        st.session_state.selected_movie = tapped_title
+        st.session_state.selected_lang = tapped_lang
+        st.session_state.resume_seconds = get_movie_progress(current_user, tapped_title) * 60
+        st.session_state.is_playing = True
+        st.session_state.show_admin_panel = False
+        st.rerun()
 
 # ---------------- SIDEBAR ----------------
 
@@ -807,7 +897,7 @@ with st.sidebar:
             st.rerun()
 
         if st.session_state.confirm_delete_account:
-            st.warning("Are you sure? Your account & history will be permanently deleted.")
+            st.warning("Are you sure? Account & history will be permanently deleted.")
             del_c1, del_c2 = st.columns(2)
             with del_c1:
                 if st.button("✅ Yes, Delete", key="confirm_del_yes", use_container_width=True):
@@ -828,12 +918,12 @@ with st.sidebar:
                     st.rerun()
 
     st.divider()
-    with st.expander("👥 Watch Party (Sync with Friends)", expanded=bool(st.session_state.party_room)):
+    with st.expander("👥 Watch Party", expanded=bool(st.session_state.party_room)):
         if st.session_state.party_room:
             p_info = get_party(st.session_state.party_room)
-            st.success(f"🟢 Active Room: **{st.session_state.party_room}**")
+            st.success(f"🟢 Room: **{st.session_state.party_room}**")
             if p_info:
-                st.caption(f"🎬 Watching: {p_info[2]} ({p_info[3]}) @ {p_info[4]}m")
+                st.caption(f"🎬 {p_info[2]} ({p_info[3]}) @ {p_info[4]}m")
                 if st.button("🔄 Sync with Host", use_container_width=True):
                     st.session_state.selected_movie = p_info[2]
                     st.session_state.selected_lang = p_info[3]
@@ -845,7 +935,7 @@ with st.sidebar:
                 st.session_state.party_room = None
                 st.rerun()
         else:
-            if st.button("🎉 Create New Watch Party", use_container_width=True):
+            if st.button("🎉 Create Watch Party", use_container_width=True):
                 code = f"FLIX-{random.randint(100, 999)}"
                 host_movie = st.session_state.selected_movie or movies["title"].iloc[0]
                 create_or_update_party(code, current_user, host_movie, st.session_state.selected_lang, 0)
@@ -855,7 +945,7 @@ with st.sidebar:
                 st.session_state.show_admin_panel = False
                 st.rerun()
 
-            join_code = st.text_input("Enter Room Code", placeholder="e.g. FLIX-482")
+            join_code = st.text_input("Room Code", placeholder="e.g. FLIX-482")
             if st.button("🔗 Join Room", use_container_width=True):
                 party = get_party(join_code.strip())
                 if party:
@@ -867,11 +957,10 @@ with st.sidebar:
                     st.session_state.show_admin_panel = False
                     st.rerun()
                 else:
-                    st.error("Room code not found!")
+                    st.error("Room not found!")
 
     st.divider()
     st.markdown("### ❤️ My Watchlist")
-
     if user_watchlist:
         for item in user_watchlist:
             w_col1, w_col2 = st.columns([4, 1])
@@ -921,7 +1010,6 @@ with st.sidebar:
                     st.session_state.resume_seconds = 0
                     st.session_state.is_playing = True
                     st.session_state.show_admin_panel = False
-                    st.toast(f"Added '{clean_title}'!")
                     st.rerun()
 
 # ---------------- ADMIN ANALYTICS VIEW ----------------
@@ -997,96 +1085,128 @@ def sort_by_user_prefs(df: pd.DataFrame, pref_genres: list[str], pref_langs: lis
     temp["pref_score"] = temp.apply(score_row, axis=1)
     return temp.sort_values(by="pref_score", ascending=False)
 
-def render_horizontal_slider(df_to_render: pd.DataFrame, section_prefix: str, default_play_lang: str):
-    """Renders items as a side-scrolling Netflix-style horizontal carousel."""
+def render_hotstar_rail(title_text: str, df_to_render: pd.DataFrame, default_play_lang: str, progress_map: dict = None):
+    """Renders a true JioHotstar-style horizontal touch-swipe poster rail."""
     if df_to_render.empty:
-        st.info("No titles available in this section yet.")
         return
 
-    cols = st.columns(len(df_to_render))
-    for idx, (_, row) in enumerate(df_to_render.iterrows()):
+    cards_html = []
+    for _, row in df_to_render.iterrows():
         m_title = row["title"]
         m_cat = row.get("category", "Movie")
+        m_genre = row.get("genre", "")
         poster_url = get_poster_url(m_title, m_cat)
         m_langs = list(get_available_languages(row).keys())
-        avg_r, _ = get_average_rating(m_title)
 
         matching_langs = [l for l in saved_langs if l in m_langs]
         play_lang = matching_langs[0] if matching_langs else default_play_lang
 
-        with cols[idx]:
-            st.markdown('<span class="slide-card-marker"></span>', unsafe_allow_html=True)
-            with st.container(border=True):
-                st.image(poster_url, use_container_width=True)
-                st.markdown(f"**{m_title}**")
-                st.caption(f"🎭 {row['genre']}")
-                if m_langs:
-                    st.caption(f"🌐 {' • '.join(m_langs)}")
-                if avg_r:
-                    st.caption(f"⭐ {avg_r}/5")
-                if st.button(f"▶ Watch ({play_lang})", key=f"{section_prefix}_{m_title}_{idx}", use_container_width=True):
-                    st.session_state.selected_movie = m_title
-                    st.session_state.selected_lang = play_lang
-                    st.session_state.resume_seconds = get_movie_progress(current_user, m_title) * 60
-                    st.session_state.is_playing = True
-                    st.rerun()
+        href = f"?watch={quote_plus(m_title)}&lang={quote_plus(play_lang)}"
+        lang_badge = f"{play_lang}" if not m_langs else f"{len(m_langs)} Langs" if len(m_langs) > 1 else m_langs[0]
 
-# ---------------- MAIN UI: NAVBAR, HERO & QUICK SEARCH ----------------
+        prog_bar = ""
+        if progress_map and m_title in progress_map:
+            mins = progress_map[m_title]
+            pct = min(int((mins / 150.0) * 100), 100) if mins > 0 else 12
+            prog_bar = f'<div class="progress-bar-bg"><div class="progress-bar-fill" style="width:{pct}%;"></div></div>'
+
+        card = f"""
+        <a class="poster-tile" href="{href}" target="_self">
+            <div class="poster-img-wrap">
+                <img src="{poster_url}" alt="{m_title}" loading="lazy" />
+                <div class="poster-gradient"></div>
+                <span class="lang-pill">{lang_badge}</span>
+                <span class="play-badge">▶</span>
+            </div>
+            <div class="poster-info">
+                <div class="poster-name">{m_title}</div>
+                <div class="poster-sub">{m_genre}</div>
+                {prog_bar}
+            </div>
+        </a>
+        """
+        cards_html.append(card)
+
+    rail_block = f"""
+    <div class="rail-header">
+        <div class="rail-title">{title_text}</div>
+        <div class="rail-hint">Swipe ➡️</div>
+    </div>
+    <div class="poster-rail">
+        {''.join(cards_html)}
+    </div>
+    """
+    st.markdown(rail_block, unsafe_allow_html=True)
+
+# ---------------- JIOHOTSTAR TOP NAV & SPOTLIGHT BANNER ----------------
 
 st.markdown(f"""
-<div class="navbar">
-    <div class="logo">MOVIEZZ FLIX</div>
-    <div>FOR {current_user.upper()} &nbsp;&nbsp; • &nbsp;&nbsp; {', '.join(saved_langs).upper()}</div>
-</div>
-
-<div class="hero">
-    <h1>Welcome Back, {current_user}.</h1>
-    <p style="font-size:17px; color:#ddd !important;">
-        Swipe sideways across <b>Movies</b>, <b>Web Series</b>, <b>TV Serials</b> & <b>Jabardasth</b>!
-    </p>
+<div class="hotstar-nav">
+    <div class="hotstar-brand">MOVIEZZ FLIX</div>
+    <div class="hotstar-badge">👤 {current_user.upper()} • {', '.join(saved_langs).upper()}</div>
 </div>
 """, unsafe_allow_html=True)
 
-st.write("")
-top_s1, top_s2, top_s3 = st.columns([1.2, 2, 1.5])
-with top_s1:
-    if st.button("🎲 Surprise Me!", use_container_width=True):
-        pick_row = movies.sample(1).iloc[0]
-        pick_title = pick_row["title"]
-        avail = list(get_available_languages(pick_row).keys())
-        matching = [l for l in saved_langs if l in avail]
-        st.session_state.selected_movie = pick_title
-        st.session_state.selected_lang = matching[0] if matching else saved_langs[0]
-        st.session_state.resume_seconds = get_movie_progress(current_user, pick_title) * 60
+# Featured Spotlight Banner (Top Personalized Pick)
+movies_only_df = sort_by_user_prefs(movies[movies["category"].str.lower() == "movie"], saved_genres, saved_langs)
+spotlight_row = movies_only_df.iloc[0] if not movies_only_df.empty else movies.iloc[0]
+spot_title = spotlight_row["title"]
+spot_genre = spotlight_row["genre"]
+spot_cat = spotlight_row["category"]
+spot_langs = list(get_available_languages(spotlight_row).keys()) or saved_langs
+
+st.markdown(f"""
+<div class="spotlight-card">
+    <span class="spotlight-tag">🔥 #1 SPOTLIGHT FOR {current_user.upper()}</span>
+    <div class="spotlight-title">{spot_title}</div>
+    <div class="spotlight-meta">
+        {spot_cat} &nbsp;•&nbsp; {spot_genre} &nbsp;•&nbsp; {' • '.join(spot_langs)}
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+sp_c1, sp_c2, sp_c3 = st.columns([1.4, 1.4, 2.2])
+with sp_c1:
+    if st.button(f"▶ Watch {spot_title}", use_container_width=True):
+        st.session_state.selected_movie = spot_title
+        st.session_state.selected_lang = saved_langs[0]
+        st.session_state.resume_seconds = get_movie_progress(current_user, spot_title) * 60
         st.session_state.is_playing = True
         st.rerun()
-
-with top_s2:
+with sp_c2:
+    if spot_title in user_watchlist:
+        if st.button("✓ In Watchlist", use_container_width=True):
+            remove_from_watchlist(current_user, spot_title)
+            st.rerun()
+    else:
+        if st.button("+ My Watchlist", use_container_width=True):
+            add_to_watchlist(current_user, spot_title)
+            st.toast(f"Added '{spot_title}'!")
+            st.rerun()
+with sp_c3:
     all_titles = sorted(movies["title"].unique().tolist())
     quick_pick = st.selectbox(
-        "Quick Open",
+        "Search Catalog",
         options=[""] + all_titles,
-        format_func=lambda x: "🔍 Search & jump to any Movie, Series, Serial or Jabardasth..." if x == "" else x,
+        format_func=lambda x: "🔍 Search Movies, Series, Serials, Jabardasth..." if x == "" else x,
         label_visibility="collapsed"
     )
     if quick_pick:
-        if st.button(f"▶ Open '{quick_pick}'", use_container_width=True):
-            st.session_state.selected_movie = quick_pick
-            st.session_state.selected_lang = saved_langs[0]
-            st.session_state.resume_seconds = get_movie_progress(current_user, quick_pick) * 60
-            st.session_state.is_playing = True
-            st.rerun()
-
-with top_s3:
-    mood_choice = st.selectbox(
-        "Filter Mood",
-        options=list(MOOD_FILTERS.keys()),
-        index=list(MOOD_FILTERS.keys()).index(st.session_state.active_mood),
-        label_visibility="collapsed"
-    )
-    if mood_choice != st.session_state.active_mood:
-        st.session_state.active_mood = mood_choice
+        st.session_state.selected_movie = quick_pick
+        st.session_state.selected_lang = saved_langs[0]
+        st.session_state.resume_seconds = get_movie_progress(current_user, quick_pick) * 60
+        st.session_state.is_playing = True
         st.rerun()
+
+# JioHotstar Category Navigation Pills
+st.write("")
+tabs = ["All", "🎬 Movies", "📺 Web Series", "🎭 TV Serials", "😂 Jabardasth"]
+t_cols = st.columns(len(tabs))
+for i, t_name in enumerate(tabs):
+    with t_cols[i]:
+        if st.button(t_name, key=f"cat_tab_{t_name}", use_container_width=True):
+            st.session_state.active_tab = t_name
+            st.rerun()
 
 # ---------------- ACTIVE VIDEO / EPISODE PLAYER ----------------
 
@@ -1110,7 +1230,7 @@ if active_movie:
 
     default_idx = AVAILABLE_LANGUAGES.index(st.session_state.selected_lang) if st.session_state.selected_lang in AVAILABLE_LANGUAGES else 0
     chosen_lang = st.radio(
-        "🌐 Choose Language:",
+        "🌐 Audio Language:",
         options=AVAILABLE_LANGUAGES,
         index=default_idx,
         horizontal=True,
@@ -1120,8 +1240,6 @@ if active_movie:
 
     raw_url = saved_movie_langs.get(chosen_lang) or (next(iter(saved_movie_langs.values())) if saved_movie_langs else "")
     yt_full_search = f"https://www.youtube.com/results?search_query={quote_plus(f'{active_movie} {chosen_lang} full')}"
-
-    # Check if URL is a direct playable video or a YouTube search page
     is_direct_video = bool(raw_url) and ("youtube.com/results" not in raw_url)
 
     current_saved_mins = get_movie_progress(current_user, active_movie)
@@ -1148,7 +1266,7 @@ if active_movie:
                 st.video(raw_url, start_time=start_sec, autoplay=True)
             else:
                 target_link = raw_url if raw_url else yt_full_search
-                st.info(f"📺 Click below to watch **{active_movie}** latest full episodes directly on YouTube:")
+                st.info(f"📺 Watch **{active_movie}** latest full episodes directly on YouTube:")
                 st.link_button(f"▶️ Watch {active_movie} Full Episodes on YouTube", target_link, use_container_width=True)
 
         if chat_col:
@@ -1177,7 +1295,7 @@ if active_movie:
             p_col1, p_col2, p_col3 = st.columns([2.5, 1, 1])
             with p_col1:
                 stopped_at_mins = st.slider(
-                    "⏱️ Where did you pause? (Save minute to resume later)",
+                    "⏱️ Pause Progress (Save minute to resume later)",
                     min_value=0,
                     max_value=180,
                     value=current_saved_mins,
@@ -1188,8 +1306,6 @@ if active_movie:
                 st.write("")
                 if st.button("💾 Save Progress", use_container_width=True):
                     update_watch_minutes(current_user, active_movie, chosen_lang, stopped_at_mins)
-                    if st.session_state.party_room:
-                        create_or_update_party(st.session_state.party_room, current_user, active_movie, chosen_lang, stopped_at_mins)
                     st.session_state.resume_seconds = stopped_at_mins * 60
                     st.toast(f"Saved at {stopped_at_mins} mins!")
                     st.rerun()
@@ -1198,7 +1314,6 @@ if active_movie:
                 if st.button("✅ Mark Finished", use_container_width=True):
                     remove_continue_watching(current_user, active_movie)
                     st.session_state.resume_seconds = 0
-                    st.toast(f"Removed '{active_movie}' from Continue Watching!")
                     st.rerun()
 
     details = get_movie_details(active_movie)
@@ -1209,52 +1324,40 @@ if active_movie:
 
     with col2:
         btn_col1, btn_col2, btn_col3 = st.columns(3)
-
         with btn_col1:
             play_label = f"⏩ Resume ({current_saved_mins}m)" if current_saved_mins > 0 else f"▶ Play ({chosen_lang})"
             if st.button(play_label, key="play_main_btn", use_container_width=True):
                 st.session_state.resume_seconds = current_saved_mins * 60
                 st.session_state.is_playing = True
                 st.rerun()
-
         with btn_col2:
-            in_watchlist = active_movie in user_watchlist
-            if in_watchlist:
+            if active_movie in user_watchlist:
                 if st.button("💔 Remove Watchlist", use_container_width=True):
                     remove_from_watchlist(current_user, active_movie)
                     st.rerun()
             else:
                 if st.button("❤️ + Watchlist", use_container_width=True):
                     add_to_watchlist(current_user, active_movie)
-                    st.toast(f"Added '{active_movie}'!")
                     st.rerun()
-
         with btn_col3:
             yt_btn_target = raw_url if (raw_url and "youtube.com/results" in raw_url) else yt_full_search
             st.link_button("📺 Open on YouTube", yt_btn_target, use_container_width=True)
 
         avg_rating, rating_count = get_average_rating(active_movie)
-        user_rating_text = f"⭐ {avg_rating}/5 ({rating_count} reviews)" if avg_rating else "No user ratings yet"
+        user_rating_text = f"⭐ {avg_rating}/5 ({rating_count} reviews)" if avg_rating else "No ratings yet"
         st.write(f"**📂 Category:** {active_cat}  |  **👥 Rating:** {user_rating_text}")
 
         if details:
             st.write(f"**📅 Year:** {details.get('Year', 'N/A')}  |  **⭐ IMDb:** {details.get('imdbRating', 'N/A')}  |  **⏱️ Runtime:** {details.get('Runtime', 'N/A')}")
             st.write(f"**🎭 Genre:** {details.get('Genre', 'N/A')}")
-            st.write(f"**🎬 Director / Creator:** {details.get('Director', 'N/A')}")
             st.write(f"**🌟 Cast:** {details.get('Actors', 'N/A')}")
-            st.write("**📝 Plot:**")
             st.write(details.get("Plot", "N/A"))
         elif not movie_df_match.empty:
             st.write(f"**🎭 Genre:** {movie_df_match['genre'].iloc[0]}")
 
-        with st.expander("📤 Share with Friends"):
-            share_link = raw_url if raw_url else yt_full_search
-            st.code(f"🍿 Watch '{active_movie}' ({chosen_lang}) on MOVIEZZ FLIX! 👉 {share_link}", language=None)
-
-    # Ratings & Reviews
+    # Rate & Review
     st.markdown("### ⭐ Rate & Review")
     rev_col1, rev_col2 = st.columns([1, 1.5])
-
     with rev_col1:
         with st.form(f"review_form_{active_movie}"):
             star_rating = st.slider("Your Rating", 1, 5, 5)
@@ -1263,11 +1366,10 @@ if active_movie:
                 save_review(current_user, active_movie, star_rating, review_text)
                 st.success("Review saved!")
                 st.rerun()
-
     with rev_col2:
         all_reviews = get_movie_reviews(active_movie)
         if all_reviews:
-            for r_user, r_stars, r_comment in all_reviews[:4]:
+            for r_user, r_stars, r_comment in all_reviews[:3]:
                 with st.container(border=True):
                     st.markdown(f"**@{r_user}** — {'⭐' * r_stars} ({r_stars}/5)")
                     if r_comment:
@@ -1275,99 +1377,46 @@ if active_movie:
         else:
             st.info("No reviews yet.")
 
-# ---------------- MOOD FILTER SLIDER (IF SELECTED) ----------------
+# ---------------- JIOHOTSTAR HORIZONTAL POSTER RAILS ----------------
 
-if st.session_state.active_mood != "All Moods":
-    st.divider()
-    m_hdr1, m_hdr2 = st.columns([5, 1])
-    with m_hdr1:
-        st.markdown(f"## {st.session_state.active_mood} Picks ➡️")
-    with m_hdr2:
-        if st.button("Clear Mood", use_container_width=True):
-            st.session_state.active_mood = "All Moods"
-            st.rerun()
+active_tab = st.session_state.active_tab
 
-    target_genres = MOOD_FILTERS[st.session_state.active_mood]
-    pattern = "|".join(target_genres)
-    mood_df = movies[movies["genre"].str.contains(pattern, case=False, na=False)]
-    render_horizontal_slider(mood_df, "mood_slide", saved_langs[0])
+# 1. Continue Watching Rail
+if cw_list and active_tab == "All":
+    cw_titles = [item[0] for item in cw_list]
+    cw_prog_map = {item[0]: item[2] for item in cw_list}
+    cw_df = movies[movies["title"].isin(cw_titles)].copy()
+    # Preserve recent order
+    cw_df["order"] = cw_df["title"].apply(lambda t: cw_titles.index(t))
+    cw_df = cw_df.sort_values("order")
+    render_hotstar_rail(f"⏯️ Continue Watching for {current_user}", cw_df, saved_langs[0], progress_map=cw_prog_map)
 
-# ---------------- CONTINUE WATCHING SLIDER ----------------
+# 2. Movies Rail
+if active_tab in ("All", "🎬 Movies"):
+    render_hotstar_rail("🎬 Recommended Movies", movies_only_df, saved_langs[0])
 
-if cw_list:
-    st.divider()
-    st.markdown(f"## ⏯️ Continue Watching for {current_user} ➡️")
+# 3. Web Series Rail
+if active_tab in ("All", "📺 Web Series"):
+    series_only_df = sort_by_user_prefs(movies[movies["category"].str.lower() == "web series"], saved_genres, saved_langs)
+    render_hotstar_rail("📺 Popular Web Series", series_only_df, saved_langs[0])
 
-    cw_cols = st.columns(len(cw_list))
-    for idx, (cw_title, cw_lang, cw_mins) in enumerate(cw_list):
-        match_r = movies[movies["title"] == cw_title]
-        cw_cat = match_r["category"].iloc[0] if not match_r.empty else "Movie"
-        cw_poster = get_poster_url(cw_title, cw_cat)
+# 4. Daily TV Serials Rail
+if active_tab in ("All", "🎭 TV Serials"):
+    serials_only_df = movies[movies["category"].str.lower() == "serial"]
+    render_hotstar_rail("🎭 Daily TV Serials", serials_only_df, saved_langs[0])
 
-        with cw_cols[idx]:
-            st.markdown('<span class="slide-card-marker"></span>', unsafe_allow_html=True)
-            with st.container(border=True):
-                st.image(cw_poster, use_container_width=True)
-                st.markdown(f"**{cw_title}**")
-                if cw_mins > 0:
-                    st.caption(f"🌐 {cw_lang} • Paused at {cw_mins}m")
-                    st.progress(min(cw_mins / 150.0, 1.0))
-                else:
-                    st.caption(f"🌐 {cw_lang} • Started")
-                    st.progress(0.1)
-
-                b1, b2 = st.columns([3, 1])
-                with b1:
-                    btn_txt = f"⏩ Resume" if cw_mins > 0 else f"▶ Resume"
-                    if st.button(btn_txt, key=f"cw_resume_{cw_title}_{idx}", use_container_width=True):
-                        st.session_state.selected_movie = cw_title
-                        st.session_state.selected_lang = cw_lang
-                        st.session_state.resume_seconds = cw_mins * 60
-                        st.session_state.is_playing = True
-                        st.rerun()
-                with b2:
-                    if st.button("✖", key=f"cw_rem_{cw_title}_{idx}", help="Remove"):
-                        remove_continue_watching(current_user, cw_title)
-                        st.rerun()
-
-# ---------------- HORIZONTAL SLIDING SECTIONS ----------------
-
-# 1. MOVIES (RECOMMENDED FIRST, THEN ALL MOVIES)
-st.divider()
-st.markdown("## 🎬 Recommended Movies ➡️")
-st.caption("👈 Swipe / slide sideways to browse all movies")
-movies_only_df = sort_by_user_prefs(movies[movies["category"].str.lower() == "movie"], saved_genres, saved_langs)
-render_horizontal_slider(movies_only_df, "movies_slide", saved_langs[0])
-
-# 2. WEB SERIES
-st.divider()
-st.markdown("## 📺 Popular Web Series ➡️")
-st.caption("👈 Swipe / slide sideways to browse web series")
-series_only_df = sort_by_user_prefs(movies[movies["category"].str.lower() == "web series"], saved_genres, saved_langs)
-render_horizontal_slider(series_only_df, "series_slide", saved_langs[0])
-
-# 3. TV SERIALS
-st.divider()
-st.markdown("## 🎭 Daily TV Serials ➡️")
-st.caption("👈 Swipe / slide sideways for latest serial episodes")
-serials_only_df = movies[movies["category"].str.lower() == "serial"]
-render_horizontal_slider(serials_only_df, "serials_slide", saved_langs[0])
-
-# 4. JABARDASTH & COMEDY SHOWS
-st.divider()
-st.markdown("## 😂 Jabardasth & TV Comedy Shows ➡️")
-st.caption("👈 Swipe / slide sideways for Jabardasth, Extra Jabardasth & Dhee")
-jabardasth_only_df = movies[movies["category"].str.lower() == "jabardasth"]
-render_horizontal_slider(jabardasth_only_df, "jabardasth_slide", "Telugu")
+# 5. Jabardasth & Comedy Shows Rail
+if active_tab in ("All", "😂 Jabardasth"):
+    jabardasth_only_df = movies[movies["category"].str.lower() == "jabardasth"]
+    render_hotstar_rail("😂 Jabardasth & TV Comedy Shows", jabardasth_only_df, "Telugu")
 
 # ---------------- FOOTER ----------------
 
 st.divider()
 st.markdown("""
-<div style="text-align:center; padding:20px; color:#888;">
-    <h3 style="color:#e50914 !important;">MOVIEZZ FLIX</h3>
-    Movies • Web Series • Serials • Jabardasth 🍿
-    <br><br>
+<div style="text-align:center; padding:18px; color:#64748b;">
+    <h3 style="color:#3b82f6 !important; margin-bottom:4px;">MOVIEZZ FLIX</h3>
+    Movies • Web Series • Serials • Jabardasth 🍿<br>
     © 2026 MOVIEZZ FLIX
 </div>
 """, unsafe_allow_html=True)
