@@ -1,4 +1,5 @@
 import os
+import re
 import csv
 import random
 import hashlib
@@ -368,44 +369,23 @@ init_database()
 
 # ---------------- SESSION STATE ----------------
 
-if "logged_in_user" not in st.session_state:
-    st.session_state.logged_in_user = None
-
-if "selected_movie" not in st.session_state:
-    st.session_state.selected_movie = None
-
-if "is_playing" not in st.session_state:
-    st.session_state.is_playing = False
-
-if "selected_lang" not in st.session_state:
-    st.session_state.selected_lang = "Telugu"
-
-if "resume_seconds" not in st.session_state:
-    st.session_state.resume_seconds = 0
-
-if "onboarding_step" not in st.session_state:
-    st.session_state.onboarding_step = 1
-
-if "temp_genres" not in st.session_state:
-    st.session_state.temp_genres = []
-
-if "editing_prefs" not in st.session_state:
-    st.session_state.editing_prefs = False
-
-if "auth_page" not in st.session_state:
-    st.session_state.auth_page = "login"
-
-if "active_mood" not in st.session_state:
-    st.session_state.active_mood = "All Moods"
-
-if "party_room" not in st.session_state:
-    st.session_state.party_room = None
-
-if "show_admin_panel" not in st.session_state:
-    st.session_state.show_admin_panel = False
-
-if "confirm_delete_account" not in st.session_state:
-    st.session_state.confirm_delete_account = False
+for key, default in [
+    ("logged_in_user", None),
+    ("selected_movie", None),
+    ("is_playing", False),
+    ("selected_lang", "Telugu"),
+    ("resume_seconds", 0),
+    ("onboarding_step", 1),
+    ("temp_genres", []),
+    ("editing_prefs", False),
+    ("auth_page", "login"),
+    ("active_mood", "All Moods"),
+    ("party_room", None),
+    ("show_admin_panel", False),
+    ("confirm_delete_account", False),
+]:
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 # ---------------- CLASSIC CINEMATIC CSS ----------------
 
@@ -449,7 +429,7 @@ h1, h2, h3, h4, p, label, span {
     text-shadow: 0 0 18px rgba(229, 9, 20, 0.55);
 }
 .hero {
-    padding: 48px 42px;
+    padding: 44px 38px;
     margin-top: 15px;
     border-radius: 14px;
     background:
@@ -460,8 +440,19 @@ h1, h2, h3, h4, p, label, span {
     border: 1px solid rgba(255, 255, 255, 0.1);
 }
 .hero h1 {
-    font-size: 42px;
+    font-size: 40px;
     font-weight: 900;
+}
+.rank-badge {
+    display: inline-block;
+    background: linear-gradient(135deg, #e50914, #8b0000);
+    color: white !important;
+    font-size: 11px;
+    font-weight: 900;
+    padding: 2px 8px;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    letter-spacing: 0.5px;
 }
 .stButton > button {
     background: linear-gradient(135deg, #e50914, #b20710);
@@ -471,10 +462,12 @@ h1, h2, h3, h4, p, label, span {
     font-weight: bold;
     letter-spacing: 0.4px;
     box-shadow: 0 4px 14px rgba(229, 9, 20, 0.35);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 .stButton > button:hover {
     background: linear-gradient(135deg, #ff1e27, #c90812);
     box-shadow: 0 6px 20px rgba(229, 9, 20, 0.55);
+    transform: translateY(-1px);
 }
 div[data-testid="stImage"] img {
     border-radius: 9px;
@@ -509,9 +502,26 @@ def get_movie_details(title: str):
     except requests.RequestException:
         return None
 
+def get_youtube_thumbnail(movie_row: pd.Series) -> str:
+    """Extracts YouTube video ID from any language URL to use as instant HD poster fallback."""
+    for col in LANG_COLUMNS.values():
+        url = str(movie_row.get(col, "")).strip()
+        match = re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})", url)
+        if match:
+            return f"https://img.youtube.com/vi/{match.group(1)}/hqdefault.jpg"
+    return "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=600&q=80"
+
+def get_smart_poster(title: str, movie_row: pd.Series = None) -> str:
+    details = get_movie_details(title)
+    if details and details.get("Poster") and details.get("Poster") != "N/A":
+        return details["Poster"]
+    if movie_row is not None:
+        return get_youtube_thumbnail(movie_row)
+    return "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=600&q=80"
+
 @st.cache_data
 def load_movies():
-    df = pd.read_csv(CSV_PATH)
+    df = pd.read_csv(CSV_PATH, on_bad_lines="skip")
     df["title"] = df["title"].astype(str).str.strip()
     df["genre"] = df["genre"].fillna("").astype(str)
     for col in LANG_COLUMNS.values():
@@ -528,6 +538,12 @@ def append_movie_to_csv(title: str, genre: str, te_url: str, hi_url: str, ta_url
         if not file_exists:
             writer.writerow(["title", "genre", "telugu_url", "hindi_url", "tamil_url", "english_url"])
         writer.writerow([title.strip(), genre.strip(), te_url.strip(), hi_url.strip(), ta_url.strip(), en_url.strip()])
+    load_movies.clear()
+
+def delete_movie_from_csv(title: str):
+    df = load_movies()
+    df = df[df["title"] != title]
+    df.to_csv(CSV_PATH, index=False)
     load_movies.clear()
 
 # ---------------- LOGIN / SIGNUP / SEPARATE FORGOT PASSWORD PAGE ----------------
@@ -627,7 +643,6 @@ if st.session_state.logged_in_user is None:
 current_user = st.session_state.logged_in_user
 saved_genres, saved_langs = get_user_preferences(current_user)
 
-# Auto-skip onboarding wizard for 'admin' & open Admin Dashboard directly
 if current_user.lower() == "admin" and (saved_genres is None or saved_langs is None):
     save_user_preferences(current_user, AVAILABLE_GENRES, AVAILABLE_LANGUAGES)
     saved_genres, saved_langs = AVAILABLE_GENRES, AVAILABLE_LANGUAGES
@@ -730,7 +745,7 @@ except FileNotFoundError:
     st.error("`movies.csv` file not found!")
     st.stop()
 
-# ---------------- SIDEBAR (PROFILE, LOGOUT, DELETE ACCOUNT FOR USERS ONLY, WATCH PARTY, WATCHLIST) ----------------
+# ---------------- SIDEBAR ----------------
 
 user_watchlist = get_watchlist(current_user)
 cw_list = get_continue_watching(current_user)
@@ -747,7 +762,6 @@ with st.sidebar:
     s_col2.metric("⏯️ Active", len(cw_list))
     s_col3.metric("⭐ Rated", rev_count)
 
-    # Admin vs Regular User Controls
     if current_user.lower() == "admin":
         btn_lbl = "🎬 Browse Movies" if st.session_state.show_admin_panel else "📊 Admin Analytics"
         if st.button(btn_lbl, use_container_width=True):
@@ -759,7 +773,6 @@ with st.sidebar:
             st.session_state.onboarding_step = 1
             st.rerun()
 
-    # Logout Button (For Both Admin & Users)
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state.logged_in_user = None
         st.session_state.selected_movie = None
@@ -773,7 +786,6 @@ with st.sidebar:
             del st.session_state.prefs_initialized
         st.rerun()
 
-    # Delete Account Button (ONLY FOR REGULAR USERS, NOT ADMIN)
     if current_user.lower() != "admin":
         if st.button("🗑️ Delete Account", use_container_width=True):
             st.session_state.confirm_delete_account = not st.session_state.confirm_delete_account
@@ -881,7 +893,6 @@ with st.sidebar:
                     st.error("Movie already exists!")
                 else:
                     append_movie_to_csv(clean_title, clean_genre, m_te, m_hi, m_ta, m_en)
-                    # Automatically open & play the newly added movie
                     st.session_state.selected_movie = clean_title
                     if m_te.strip():
                         st.session_state.selected_lang = "Telugu"
@@ -897,7 +908,7 @@ with st.sidebar:
                     st.toast(f"Added & Playing '{clean_title}'!")
                     st.rerun()
 
-# ---------------- ADMIN ANALYTICS VIEW (DEFAULT FOR ADMIN) ----------------
+# ---------------- ADMIN ANALYTICS VIEW ----------------
 
 if st.session_state.show_admin_panel and current_user.lower() == "admin":
     st.markdown("## 📊 MOVIEZZ FLIX — Admin Analytics Dashboard")
@@ -917,6 +928,12 @@ if st.session_state.show_admin_panel and current_user.lower() == "admin":
             columns=["User ID", "Username", "Favourite Genres", "Preferred Languages", "Watchlist Movies", "Reviews Given"]
         )
         st.dataframe(df_users, use_container_width=True, hide_index=True)
+        st.download_button(
+            "⬇️ Export Users Report (CSV)",
+            data=df_users.to_csv(index=False).encode("utf-8"),
+            file_name="moviezz_flix_users.csv",
+            mime="text/csv"
+        )
     else:
         st.info("No registered users yet.")
 
@@ -937,6 +954,14 @@ if st.session_state.show_admin_panel and current_user.lower() == "admin":
             st.bar_chart(df_l)
         else:
             st.info("No language stream data yet.")
+
+    st.divider()
+    with st.expander("🗑️ Manage / Delete Movies from Catalog"):
+        del_m = st.selectbox("Select Movie to Remove", options=[""] + sorted(movies["title"].tolist()))
+        if del_m and st.button(f"Delete '{del_m}'", key="admin_del_movie"):
+            delete_movie_from_csv(del_m)
+            st.success(f"Removed '{del_m}' from catalog!")
+            st.rerun()
 
     st.stop()
 
@@ -1023,7 +1048,7 @@ for idx, mood_name in enumerate(MOOD_FILTERS.keys()):
             st.session_state.active_mood = mood_name
             st.rerun()
 
-# ---------------- ACTIVE MOVIE PLAYER (WITH RESUME, WATCH PARTY CHAT & SHARE) ----------------
+# ---------------- ACTIVE MOVIE PLAYER ----------------
 
 active_movie = st.session_state.selected_movie
 
@@ -1040,7 +1065,8 @@ if active_movie:
             st.rerun()
 
     movie_df_match = movies[movies["title"] == active_movie]
-    saved_movie_langs = get_available_languages(movie_df_match.iloc[0]) if not movie_df_match.empty else {}
+    active_row = movie_df_match.iloc[0] if not movie_df_match.empty else None
+    saved_movie_langs = get_available_languages(active_row) if active_row is not None else {}
 
     default_idx = AVAILABLE_LANGUAGES.index(st.session_state.selected_lang) if st.session_state.selected_lang in AVAILABLE_LANGUAGES else 0
     chosen_lang = st.radio(
@@ -1085,6 +1111,14 @@ if active_movie:
             with chat_col:
                 with st.container(border=True):
                     st.markdown(f"### 💬 Party Chat (`{st.session_state.party_room}`)")
+                    # Quick 1-tap reaction buttons
+                    r1, r2, r3, r4 = st.columns(4)
+                    for r_col, emo in zip([r1, r2, r3, r4], ["🔥", "😂", "😱", "❤️"]):
+                        with r_col:
+                            if st.button(emo, key=f"react_{emo}", use_container_width=True):
+                                add_party_message(st.session_state.party_room, current_user, f"{emo} Reaction!")
+                                st.rerun()
+
                     msgs = get_party_messages(st.session_state.party_room)
                     if msgs:
                         for m_user, m_txt in reversed(msgs):
@@ -1135,10 +1169,7 @@ if active_movie:
     col1, col2 = st.columns([1, 2.5])
 
     with col1:
-        if details and details.get("Poster") != "N/A":
-            st.image(details["Poster"], use_container_width=True)
-        else:
-            st.info("Poster unavailable")
+        st.image(get_smart_poster(active_movie, active_row), use_container_width=True)
 
     with col2:
         btn_col1, btn_col2, btn_col3 = st.columns(3)
@@ -1176,8 +1207,8 @@ if active_movie:
             st.write(f"**🌟 Cast:** {details.get('Actors', 'N/A')}")
             st.write("**📝 Plot:**")
             st.write(details.get("Plot", "N/A"))
-        elif not movie_df_match.empty:
-            st.write(f"**🎭 Genre:** {movie_df_match['genre'].iloc[0]}")
+        elif active_row is not None:
+            st.write(f"**🎭 Genre:** {active_row['genre']}")
 
         with st.expander("📤 Share This Movie with Friends"):
             share_link = video_url if video_url else yt_full_search
@@ -1214,11 +1245,9 @@ if active_movie:
         rec_cols = st.columns(3)
         for i, (_, row) in enumerate(recs.iterrows()):
             rec_title = row["title"]
-            rec_data = get_movie_details(rec_title)
             with rec_cols[i % 3]:
                 with st.container(border=True):
-                    if rec_data and rec_data.get("Poster") != "N/A":
-                        st.image(rec_data["Poster"], use_container_width=True)
+                    st.image(get_smart_poster(rec_title, row), use_container_width=True)
                     st.markdown(f"#### {rec_title}")
                     st.caption(f"🎭 {row['genre']}")
                     if st.button("▶ Open & Play", key=f"rec_btn_{rec_title}", use_container_width=True):
@@ -1246,11 +1275,9 @@ if st.session_state.active_mood != "All Moods":
     m_cols = st.columns(4)
     for idx, (_, row) in enumerate(mood_df.iterrows()):
         m_title = row["title"]
-        m_data = get_movie_details(m_title)
         with m_cols[idx % 4]:
             with st.container(border=True):
-                if m_data and m_data.get("Poster") != "N/A":
-                    st.image(m_data["Poster"], use_container_width=True)
+                st.image(get_smart_poster(m_title, row), use_container_width=True)
                 st.markdown(f"**{m_title}**")
                 st.caption(f"🎭 {row['genre']}")
                 if st.button("▶ Watch Now", key=f"mood_card_{m_title}_{idx}", use_container_width=True):
@@ -1268,11 +1295,11 @@ if cw_list:
 
     cw_cols = st.columns(4)
     for idx, (cw_title, cw_lang, cw_mins) in enumerate(cw_list[:4]):
-        cw_data = get_movie_details(cw_title)
+        match_r = movies[movies["title"] == cw_title]
+        cw_row = match_r.iloc[0] if not match_r.empty else None
         with cw_cols[idx % 4]:
             with st.container(border=True):
-                if cw_data and cw_data.get("Poster") != "N/A":
-                    st.image(cw_data["Poster"], use_container_width=True)
+                st.image(get_smart_poster(cw_title, cw_row), use_container_width=True)
                 st.markdown(f"**{cw_title}**")
                 if cw_mins > 0:
                     st.caption(f"🌐 {cw_lang} • Paused at {cw_mins} mins")
@@ -1300,7 +1327,7 @@ if cw_list:
 st.divider()
 st.markdown(f"## 🎯 Recommended For You ({', '.join(saved_genres)} • {', '.join(saved_langs)})")
 
-def render_movie_grid(df_to_render: pd.DataFrame, section_prefix: str, default_play_lang: str):
+def render_movie_grid(df_to_render: pd.DataFrame, section_prefix: str, default_play_lang: str, show_rank: bool = False):
     if df_to_render.empty:
         st.info("No movies found in this section.")
         return
@@ -1308,7 +1335,6 @@ def render_movie_grid(df_to_render: pd.DataFrame, section_prefix: str, default_p
     grid_cols = st.columns(4)
     for idx, (_, row) in enumerate(df_to_render.iterrows()):
         m_title = row["title"]
-        m_data = get_movie_details(m_title)
         m_langs = list(get_available_languages(row).keys())
         avg_r, _ = get_average_rating(m_title)
 
@@ -1317,8 +1343,9 @@ def render_movie_grid(df_to_render: pd.DataFrame, section_prefix: str, default_p
 
         with grid_cols[idx % 4]:
             with st.container(border=True):
-                if m_data and m_data.get("Poster") != "N/A":
-                    st.image(m_data["Poster"], use_container_width=True)
+                if show_rank and idx < 10:
+                    st.markdown(f'<span class="rank-badge">🔥 TOP #{idx + 1}</span>', unsafe_allow_html=True)
+                st.image(get_smart_poster(m_title, row), use_container_width=True)
                 st.markdown(f"**{m_title}**")
                 st.caption(f"🎭 {row['genre']}")
                 if m_langs:
@@ -1333,7 +1360,7 @@ def render_movie_grid(df_to_render: pd.DataFrame, section_prefix: str, default_p
                     st.rerun()
 
 if not recommended_df.empty:
-    render_movie_grid(recommended_df, "rec_feed", saved_langs[0])
+    render_movie_grid(recommended_df, "rec_feed", saved_langs[0], show_rank=True)
 else:
     st.info("No exact matches yet. Edit preferences in sidebar or explore below!")
 
@@ -1345,12 +1372,13 @@ if top_rated_rows:
     st.markdown("## 🏆 Top Rated on MOVIEZZ FLIX")
     tr_cols = st.columns(4)
     for idx, (tr_title, tr_avg, tr_cnt) in enumerate(top_rated_rows):
-        tr_data = get_movie_details(tr_title)
+        match_r = movies[movies["title"] == tr_title]
+        tr_row = match_r.iloc[0] if not match_r.empty else None
         with tr_cols[idx % 4]:
             with st.container(border=True):
-                if tr_data and tr_data.get("Poster") != "N/A":
-                    st.image(tr_data["Poster"], use_container_width=True)
-                st.markdown(f"**#{idx + 1} {tr_title}**")
+                st.markdown(f'<span class="rank-badge">🏆 #{idx + 1} RATED</span>', unsafe_allow_html=True)
+                st.image(get_smart_poster(tr_title, tr_row), use_container_width=True)
+                st.markdown(f"**{tr_title}**")
                 st.caption(f"⭐ {tr_avg}/5 ({tr_cnt} user ratings)")
                 if st.button("▶ Watch Top Pick", key=f"tr_btn_{tr_title}", use_container_width=True):
                     st.session_state.selected_movie = tr_title
@@ -1408,7 +1436,7 @@ if vibe_query.strip():
     )
     display_others = movies[mask]
 
-render_movie_grid(display_others, "other_feed", saved_langs[0])
+render_movie_grid(display_others, "other_feed", saved_langs[0], show_rank=False)
 
 # ---------------- FOOTER ----------------
 
