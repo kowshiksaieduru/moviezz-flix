@@ -38,8 +38,6 @@ AVAILABLE_GENRES = [
     "Comedy", "Crime", "Sci-Fi", "Adventure", "Fantasy", "Romance"
 ]
 
-AVAILABLE_CATEGORIES = ["Movie", "Web Series", "Serial", "Jabardasth"]
-
 AVAILABLE_LANGUAGES = ["Telugu", "Hindi", "Tamil", "English"]
 
 MOOD_FILTERS = {
@@ -47,7 +45,7 @@ MOOD_FILTERS = {
     "🔥 Mass & Action": ["Action", "Crime"],
     "😱 Goosebumps & Scares": ["Horror", "Thriller"],
     "🧠 Mind-Bending": ["Sci-Fi", "Adventure", "Fantasy"],
-    "😂 Comedy & Chill": ["Comedy", "Drama", "Romance"]
+    "💖 Feel-Good & Drama": ["Drama", "Comedy", "Romance"]
 }
 
 st.set_page_config(
@@ -157,6 +155,7 @@ def reset_password_direct(username: str, new_password: str) -> bool:
     return cur.rowcount > 0
 
 def delete_user_account(username: str):
+    """Permanently deletes user and all their records so Admin Dashboard updates immediately."""
     if username.lower() == "admin":
         return
     with get_db_connection() as conn:
@@ -286,6 +285,16 @@ def get_average_rating(movie_title: str):
         return round(res[0], 1), res[1]
     return None, 0
 
+def get_top_rated_movies(limit: int = 4):
+    with get_db_connection() as conn:
+        return conn.execute("""
+            SELECT movie_title, ROUND(AVG(rating), 1) as avg_r, COUNT(*) as cnt
+            FROM reviews
+            GROUP BY movie_title
+            ORDER BY avg_r DESC, cnt DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+
 def get_user_review_count(username: str) -> int:
     with get_db_connection() as conn:
         res = conn.execute("SELECT COUNT(*) FROM reviews WHERE username = ?", (username,)).fetchone()
@@ -398,7 +407,7 @@ if "show_admin_panel" not in st.session_state:
 if "confirm_delete_account" not in st.session_state:
     st.session_state.confirm_delete_account = False
 
-# ---------------- CLASSIC CINEMATIC + HORIZONTAL SLIDER CSS ----------------
+# ---------------- CLASSIC CINEMATIC CSS ----------------
 
 st.markdown("""
 <style>
@@ -434,13 +443,13 @@ h1, h2, h3, h4, p, label, span {
 }
 .logo {
     color: #e50914;
-    font-size: 30px;
+    font-size: 32px;
     font-weight: 900;
     letter-spacing: 3px;
     text-shadow: 0 0 18px rgba(229, 9, 20, 0.55);
 }
 .hero {
-    padding: 36px 32px;
+    padding: 48px 42px;
     margin-top: 15px;
     border-radius: 14px;
     background:
@@ -451,7 +460,7 @@ h1, h2, h3, h4, p, label, span {
     border: 1px solid rgba(255, 255, 255, 0.1);
 }
 .hero h1 {
-    font-size: 36px;
+    font-size: 42px;
     font-weight: 900;
 }
 .stButton > button {
@@ -477,35 +486,6 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
     border-radius: 14px;
     box-shadow: 0 12px 35px rgba(0, 0, 0, 0.65);
 }
-/* Horizontal Sliding Row Styling */
-div[data-testid="stHorizontalBlock"]:has(.slide-card-marker) {
-    display: flex !important;
-    flex-direction: row !important;
-    flex-wrap: nowrap !important;
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-    gap: 14px !important;
-    padding-bottom: 14px !important;
-    scroll-snap-type: x mandatory;
-    -webkit-overflow-scrolling: touch;
-}
-div[data-testid="stHorizontalBlock"]:has(.slide-card-marker) > div[data-testid="column"] {
-    min-width: 230px !important;
-    max-width: 230px !important;
-    flex: 0 0 230px !important;
-    scroll-snap-align: start;
-}
-div[data-testid="stHorizontalBlock"]:has(.slide-card-marker)::-webkit-scrollbar {
-    height: 7px;
-}
-div[data-testid="stHorizontalBlock"]:has(.slide-card-marker)::-webkit-scrollbar-track {
-    background: rgba(255, 255, 255, 0.06);
-    border-radius: 10px;
-}
-div[data-testid="stHorizontalBlock"]:has(.slide-card-marker)::-webkit-scrollbar-thumb {
-    background: #e50914;
-    border-radius: 10px;
-}
 hr {
     border-color: rgba(255, 255, 255, 0.12);
 }
@@ -513,13 +493,6 @@ hr {
 """, unsafe_allow_html=True)
 
 # ---------------- DATA & API HELPERS ----------------
-
-FALLBACK_BANNERS = {
-    "Serial": "https://images.unsplash.com/photo-1522869635100-9f4c5e86aa37?auto=format&fit=crop&w=600&q=80",
-    "Jabardasth": "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=600&q=80",
-    "Web Series": "https://images.unsplash.com/photo-1593784991095-a205069470b6?auto=format&fit=crop&w=600&q=80",
-    "Movie": "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=600&q=80"
-}
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_movie_details(title: str):
@@ -538,12 +511,8 @@ def get_movie_details(title: str):
 
 @st.cache_data
 def load_movies():
-    df = pd.read_csv(CSV_PATH, on_bad_lines="skip")
+    df = pd.read_csv(CSV_PATH)
     df["title"] = df["title"].astype(str).str.strip()
-    if "category" not in df.columns:
-        df["category"] = "Movie"
-    else:
-        df["category"] = df["category"].fillna("Movie").astype(str).str.strip()
     df["genre"] = df["genre"].fillna("").astype(str)
     for col in LANG_COLUMNS.values():
         if col not in df.columns:
@@ -552,13 +521,13 @@ def load_movies():
             df[col] = df[col].fillna("").astype(str).str.strip()
     return df
 
-def append_movie_to_csv(title: str, category: str, genre: str, te_url: str, hi_url: str, ta_url: str, en_url: str):
+def append_movie_to_csv(title: str, genre: str, te_url: str, hi_url: str, ta_url: str, en_url: str):
     file_exists = CSV_PATH.exists()
     with open(CSV_PATH, mode="a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(["title", "category", "genre", "telugu_url", "hindi_url", "tamil_url", "english_url"])
-        writer.writerow([title.strip(), category.strip(), genre.strip(), te_url.strip(), hi_url.strip(), ta_url.strip(), en_url.strip()])
+            writer.writerow(["title", "genre", "telugu_url", "hindi_url", "tamil_url", "english_url"])
+        writer.writerow([title.strip(), genre.strip(), te_url.strip(), hi_url.strip(), ta_url.strip(), en_url.strip()])
     load_movies.clear()
 
 # ---------------- LOGIN / SIGNUP / SEPARATE FORGOT PASSWORD PAGE ----------------
@@ -573,7 +542,7 @@ if st.session_state.logged_in_user is None:
                 MOVIEZZ FLIX
             </h1>
             <p style="color:#d0d0d8 !important; font-size:17px; letter-spacing:0.5px;">
-                Movies • Web Series • TV Serials • Jabardasth • Watch Party
+                Blockbusters • Multi-Audio • Watch Party • Curated For You
             </p>
         </div>
     """, unsafe_allow_html=True)
@@ -658,6 +627,7 @@ if st.session_state.logged_in_user is None:
 current_user = st.session_state.logged_in_user
 saved_genres, saved_langs = get_user_preferences(current_user)
 
+# Auto-skip onboarding wizard for 'admin' & open Admin Dashboard directly
 if current_user.lower() == "admin" and (saved_genres is None or saved_langs is None):
     save_user_preferences(current_user, AVAILABLE_GENRES, AVAILABLE_LANGUAGES)
     saved_genres, saved_langs = AVAILABLE_GENRES, AVAILABLE_LANGUAGES
@@ -693,7 +663,7 @@ if saved_genres is None or saved_langs is None or st.session_state.editing_prefs
                     "Romance": "❤️ Romance"
                 }
 
-                default_g = saved_genres if saved_genres else ["Action", "Comedy", "Drama"]
+                default_g = saved_genres if saved_genres else ["Action", "Thriller"]
                 chosen_genres = []
 
                 g_cols = st.columns(2)
@@ -760,7 +730,7 @@ except FileNotFoundError:
     st.error("`movies.csv` file not found!")
     st.stop()
 
-# ---------------- SIDEBAR ----------------
+# ---------------- SIDEBAR (PROFILE, LOGOUT, DELETE ACCOUNT FOR USERS ONLY, WATCH PARTY, WATCHLIST) ----------------
 
 user_watchlist = get_watchlist(current_user)
 cw_list = get_continue_watching(current_user)
@@ -777,8 +747,9 @@ with st.sidebar:
     s_col2.metric("⏯️ Active", len(cw_list))
     s_col3.metric("⭐ Rated", rev_count)
 
+    # Admin vs Regular User Controls
     if current_user.lower() == "admin":
-        btn_lbl = "🎬 Browse Content" if st.session_state.show_admin_panel else "📊 Admin Analytics"
+        btn_lbl = "🎬 Browse Movies" if st.session_state.show_admin_panel else "📊 Admin Analytics"
         if st.button(btn_lbl, use_container_width=True):
             st.session_state.show_admin_panel = not st.session_state.show_admin_panel
             st.rerun()
@@ -788,6 +759,7 @@ with st.sidebar:
             st.session_state.onboarding_step = 1
             st.rerun()
 
+    # Logout Button (For Both Admin & Users)
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state.logged_in_user = None
         st.session_state.selected_movie = None
@@ -801,6 +773,7 @@ with st.sidebar:
             del st.session_state.prefs_initialized
         st.rerun()
 
+    # Delete Account Button (ONLY FOR REGULAR USERS, NOT ADMIN)
     if current_user.lower() != "admin":
         if st.button("🗑️ Delete Account", use_container_width=True):
             st.session_state.confirm_delete_account = not st.session_state.confirm_delete_account
@@ -891,24 +864,24 @@ with st.sidebar:
         st.caption("Watchlist is empty.")
 
     st.divider()
-    with st.expander("➕ Add Movie / Series / Serial"):
+    with st.expander("➕ Add New Movie"):
         with st.form("add_movie_form", clear_on_submit=True):
-            m_name = st.text_input("Title *")
-            m_cat = st.selectbox("Category *", options=AVAILABLE_CATEGORIES)
-            m_genre = st.text_input("Genres (e.g. Drama, Comedy) *")
+            m_name = st.text_input("Movie Title *")
+            m_genre = st.text_input("Genres (e.g. Horror, Thriller) *")
             m_te = st.text_input("Telugu Video / YouTube URL")
             m_hi = st.text_input("Hindi Video / YouTube URL")
             m_ta = st.text_input("Tamil Video / YouTube URL")
             m_en = st.text_input("English Video / YouTube URL")
-            if st.form_submit_button("Add & Open 🚀", use_container_width=True):
+            if st.form_submit_button("Add & Open Movie 🚀", use_container_width=True):
                 clean_title = m_name.strip()
                 clean_genre = m_genre.strip()
                 if not clean_title or not clean_genre:
                     st.warning("Title and Genre are required.")
                 elif clean_title.lower() in movies["title"].str.lower().values:
-                    st.error("Title already exists!")
+                    st.error("Movie already exists!")
                 else:
-                    append_movie_to_csv(clean_title, m_cat, clean_genre, m_te, m_hi, m_ta, m_en)
+                    append_movie_to_csv(clean_title, clean_genre, m_te, m_hi, m_ta, m_en)
+                    # Automatically open & play the newly added movie
                     st.session_state.selected_movie = clean_title
                     if m_te.strip():
                         st.session_state.selected_lang = "Telugu"
@@ -921,10 +894,10 @@ with st.sidebar:
                     st.session_state.resume_seconds = 0
                     st.session_state.is_playing = True
                     st.session_state.show_admin_panel = False
-                    st.toast(f"Added '{clean_title}'!")
+                    st.toast(f"Added & Playing '{clean_title}'!")
                     st.rerun()
 
-# ---------------- ADMIN ANALYTICS VIEW ----------------
+# ---------------- ADMIN ANALYTICS VIEW (DEFAULT FOR ADMIN) ----------------
 
 if st.session_state.show_admin_panel and current_user.lower() == "admin":
     st.markdown("## 📊 MOVIEZZ FLIX — Admin Analytics Dashboard")
@@ -932,7 +905,7 @@ if st.session_state.show_admin_panel and current_user.lower() == "admin":
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("👥 Registered Users", t_users)
-    m2.metric("🎬 Total Catalog", len(movies))
+    m2.metric("🎬 Total Movies", len(movies))
     m3.metric("▶️ Active Streams", t_watches)
     m4.metric("⭐ Total Reviews", t_revs)
 
@@ -941,7 +914,7 @@ if st.session_state.show_admin_panel and current_user.lower() == "admin":
     if users_list:
         df_users = pd.DataFrame(
             users_list,
-            columns=["User ID", "Username", "Favourite Genres", "Preferred Languages", "Watchlist Items", "Reviews Given"]
+            columns=["User ID", "Username", "Favourite Genres", "Preferred Languages", "Watchlist Movies", "Reviews Given"]
         )
         st.dataframe(df_users, use_container_width=True, hide_index=True)
     else:
@@ -950,9 +923,9 @@ if st.session_state.show_admin_panel and current_user.lower() == "admin":
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown("### 🔥 Most Watched Titles")
+        st.markdown("### 🔥 Most Watched Movies")
         if top_w:
-            df_w = pd.DataFrame(top_w, columns=["Title", "Views"]).set_index("Title")
+            df_w = pd.DataFrame(top_w, columns=["Movie", "Views"]).set_index("Movie")
             st.bar_chart(df_w)
         else:
             st.info("No watch history data yet.")
@@ -977,61 +950,43 @@ def get_available_languages(movie_row: pd.Series) -> dict[str, str]:
             available[lang_name] = url
     return available
 
-def get_poster_url(title: str, category: str) -> str:
-    details = get_movie_details(title)
-    if details and details.get("Poster") and details.get("Poster") != "N/A":
-        return details["Poster"]
-    return FALLBACK_BANNERS.get(category, FALLBACK_BANNERS["Movie"])
-
-def sort_by_user_prefs(df: pd.DataFrame, pref_genres: list[str], pref_langs: list[str]) -> pd.DataFrame:
-    if df.empty:
-        return df
-    def score_row(row):
+def get_personalized_movies(df: pd.DataFrame, pref_genres: list[str], pref_langs: list[str]):
+    def score_movie(row):
         m_genres = [g.strip().lower() for g in str(row["genre"]).split(",")]
         genre_hits = sum(1 for pg in pref_genres if pg.lower() in m_genres)
         avail_langs = get_available_languages(row)
         lang_hits = sum(1 for pl in pref_langs if pl in avail_langs)
-        return (genre_hits * 2) + lang_hits
 
-    temp = df.copy()
-    temp["pref_score"] = temp.apply(score_row, axis=1)
-    return temp.sort_values(by="pref_score", ascending=False)
+        if genre_hits > 0 and lang_hits > 0:
+            return (genre_hits * 2) + lang_hits
+        return 0
 
-def render_horizontal_slider(df_to_render: pd.DataFrame, section_prefix: str, default_play_lang: str):
-    """Renders items as a side-scrolling Netflix-style horizontal carousel."""
-    if df_to_render.empty:
-        st.info("No titles available in this section yet.")
-        return
+    temp_df = df.copy()
+    temp_df["match_score"] = temp_df.apply(score_movie, axis=1)
+    recommended = temp_df[temp_df["match_score"] > 0].sort_values(by="match_score", ascending=False)
+    others = temp_df[temp_df["match_score"] == 0]
+    return recommended, others
 
-    cols = st.columns(len(df_to_render))
-    for idx, (_, row) in enumerate(df_to_render.iterrows()):
-        m_title = row["title"]
-        m_cat = row.get("category", "Movie")
-        poster_url = get_poster_url(m_title, m_cat)
-        m_langs = list(get_available_languages(row).keys())
-        avg_r, _ = get_average_rating(m_title)
+def get_similar_movies(selected_title: str, df: pd.DataFrame, limit: int = 6) -> pd.DataFrame:
+    row = df[df["title"] == selected_title]
+    if row.empty:
+        return pd.DataFrame()
 
-        matching_langs = [l for l in saved_langs if l in m_langs]
-        play_lang = matching_langs[0] if matching_langs else default_play_lang
+    genres = [g.strip().lower() for g in row["genre"].iloc[0].split(",") if g.strip()]
+    if not genres:
+        return pd.DataFrame()
 
-        with cols[idx]:
-            st.markdown('<span class="slide-card-marker"></span>', unsafe_allow_html=True)
-            with st.container(border=True):
-                st.image(poster_url, use_container_width=True)
-                st.markdown(f"**{m_title}**")
-                st.caption(f"🎭 {row['genre']}")
-                if m_langs:
-                    st.caption(f"🌐 {' • '.join(m_langs)}")
-                if avg_r:
-                    st.caption(f"⭐ {avg_r}/5")
-                if st.button(f"▶ Watch ({play_lang})", key=f"{section_prefix}_{m_title}_{idx}", use_container_width=True):
-                    st.session_state.selected_movie = m_title
-                    st.session_state.selected_lang = play_lang
-                    st.session_state.resume_seconds = get_movie_progress(current_user, m_title) * 60
-                    st.session_state.is_playing = True
-                    st.rerun()
+    def genre_score(movie_genres: str) -> int:
+        m_list = [g.strip().lower() for g in movie_genres.split(",")]
+        return len(set(genres) & set(m_list))
 
-# ---------------- MAIN UI: NAVBAR, HERO & QUICK SEARCH ----------------
+    candidates = df[df["title"] != selected_title].copy()
+    candidates["score"] = candidates["genre"].apply(genre_score)
+    return candidates[candidates["score"] > 0].sort_values(by="score", ascending=False).head(limit)
+
+recommended_df, remaining_df = get_personalized_movies(movies, saved_genres, saved_langs)
+
+# ---------------- MAIN UI: NAVBAR, HERO & MOOD BAR ----------------
 
 st.markdown(f"""
 <div class="navbar">
@@ -1040,18 +995,19 @@ st.markdown(f"""
 </div>
 
 <div class="hero">
-    <h1>Welcome Back, {current_user}.</h1>
-    <p style="font-size:17px; color:#ddd !important;">
-        Swipe sideways across <b>Movies</b>, <b>Web Series</b>, <b>TV Serials</b> & <b>Jabardasth</b>!
+    <h1>Picked For You, {current_user}.</h1>
+    <p style="font-size:18px; color:#ddd !important;">
+        Showing your favourite <b>{', '.join(saved_genres)}</b> picks in <b>{', '.join(saved_langs)}</b>.
     </p>
 </div>
 """, unsafe_allow_html=True)
 
 st.write("")
-top_s1, top_s2, top_s3 = st.columns([1.2, 2, 1.5])
-with top_s1:
+mood_cols = st.columns([1.3, 1, 1, 1, 1, 1])
+with mood_cols[0]:
     if st.button("🎲 Surprise Me!", use_container_width=True):
-        pick_row = movies.sample(1).iloc[0]
+        pool = recommended_df if not recommended_df.empty else movies
+        pick_row = pool.sample(1).iloc[0]
         pick_title = pick_row["title"]
         avail = list(get_available_languages(pick_row).keys())
         matching = [l for l in saved_langs if l in avail]
@@ -1061,34 +1017,13 @@ with top_s1:
         st.session_state.is_playing = True
         st.rerun()
 
-with top_s2:
-    all_titles = sorted(movies["title"].unique().tolist())
-    quick_pick = st.selectbox(
-        "Quick Open",
-        options=[""] + all_titles,
-        format_func=lambda x: "🔍 Search & jump to any Movie, Series, Serial or Jabardasth..." if x == "" else x,
-        label_visibility="collapsed"
-    )
-    if quick_pick:
-        if st.button(f"▶ Open '{quick_pick}'", use_container_width=True):
-            st.session_state.selected_movie = quick_pick
-            st.session_state.selected_lang = saved_langs[0]
-            st.session_state.resume_seconds = get_movie_progress(current_user, quick_pick) * 60
-            st.session_state.is_playing = True
+for idx, mood_name in enumerate(MOOD_FILTERS.keys()):
+    with mood_cols[idx + 1]:
+        if st.button(mood_name, key=f"mood_btn_{mood_name}", use_container_width=True):
+            st.session_state.active_mood = mood_name
             st.rerun()
 
-with top_s3:
-    mood_choice = st.selectbox(
-        "Filter Mood",
-        options=list(MOOD_FILTERS.keys()),
-        index=list(MOOD_FILTERS.keys()).index(st.session_state.active_mood),
-        label_visibility="collapsed"
-    )
-    if mood_choice != st.session_state.active_mood:
-        st.session_state.active_mood = mood_choice
-        st.rerun()
-
-# ---------------- ACTIVE VIDEO / EPISODE PLAYER ----------------
+# ---------------- ACTIVE MOVIE PLAYER (WITH RESUME, WATCH PARTY CHAT & SHARE) ----------------
 
 active_movie = st.session_state.selected_movie
 
@@ -1105,7 +1040,6 @@ if active_movie:
             st.rerun()
 
     movie_df_match = movies[movies["title"] == active_movie]
-    active_cat = movie_df_match["category"].iloc[0] if not movie_df_match.empty else "Movie"
     saved_movie_langs = get_available_languages(movie_df_match.iloc[0]) if not movie_df_match.empty else {}
 
     default_idx = AVAILABLE_LANGUAGES.index(st.session_state.selected_lang) if st.session_state.selected_lang in AVAILABLE_LANGUAGES else 0
@@ -1118,11 +1052,8 @@ if active_movie:
     )
     st.session_state.selected_lang = chosen_lang
 
-    raw_url = saved_movie_langs.get(chosen_lang) or (next(iter(saved_movie_langs.values())) if saved_movie_langs else "")
-    yt_full_search = f"https://www.youtube.com/results?search_query={quote_plus(f'{active_movie} {chosen_lang} full')}"
-
-    # Check if URL is a direct playable video or a YouTube search page
-    is_direct_video = bool(raw_url) and ("youtube.com/results" not in raw_url)
+    video_url = saved_movie_langs.get(chosen_lang) or (next(iter(saved_movie_langs.values())) if saved_movie_langs else "")
+    yt_full_search = f"https://www.youtube.com/results?search_query={quote_plus(f'{active_movie} {chosen_lang} full movie')}"
 
     current_saved_mins = get_movie_progress(current_user, active_movie)
 
@@ -1139,17 +1070,16 @@ if active_movie:
             chat_col = None
 
         with vid_col:
-            if is_direct_video:
+            if video_url:
                 start_sec = st.session_state.resume_seconds if st.session_state.resume_seconds > 0 else (current_saved_mins * 60)
                 if start_sec > 0:
                     st.caption(f"⏩ Resuming **{active_movie}** in **{chosen_lang}** from **{start_sec // 60} mins**")
                 else:
                     st.caption(f"🔊 Playing in **{chosen_lang}**")
-                st.video(raw_url, start_time=start_sec, autoplay=True)
+                st.video(video_url, start_time=start_sec, autoplay=True)
             else:
-                target_link = raw_url if raw_url else yt_full_search
-                st.info(f"📺 Click below to watch **{active_movie}** latest full episodes directly on YouTube:")
-                st.link_button(f"▶️ Watch {active_movie} Full Episodes on YouTube", target_link, use_container_width=True)
+                st.info(f"Direct video URL not provided yet for **{active_movie}** ({chosen_lang}). Watch directly via YouTube below:")
+                st.link_button(f"▶️ Watch {active_movie} ({chosen_lang}) on YouTube", yt_full_search, use_container_width=True)
 
         if chat_col:
             with chat_col:
@@ -1163,7 +1093,7 @@ if active_movie:
                         st.caption("Say hi to your friends!")
 
                     with st.form(f"party_chat_{st.session_state.party_room}", clear_on_submit=True):
-                        chat_in = st.text_input("Message", placeholder="Mass scene 🔥", label_visibility="collapsed")
+                        chat_in = st.text_input("Message", placeholder="Mass entry scene 🔥", label_visibility="collapsed")
                         c_b1, c_b2 = st.columns(2)
                         with c_b1:
                             if st.form_submit_button("Send", use_container_width=True) and chat_in.strip():
@@ -1205,7 +1135,10 @@ if active_movie:
     col1, col2 = st.columns([1, 2.5])
 
     with col1:
-        st.image(get_poster_url(active_movie, active_cat), use_container_width=True)
+        if details and details.get("Poster") != "N/A":
+            st.image(details["Poster"], use_container_width=True)
+        else:
+            st.info("Poster unavailable")
 
     with col2:
         btn_col1, btn_col2, btn_col3 = st.columns(3)
@@ -1230,25 +1163,24 @@ if active_movie:
                     st.rerun()
 
         with btn_col3:
-            yt_btn_target = raw_url if (raw_url and "youtube.com/results" in raw_url) else yt_full_search
-            st.link_button("📺 Open on YouTube", yt_btn_target, use_container_width=True)
+            st.link_button("📺 Full Movie on YouTube", yt_full_search, use_container_width=True)
 
         avg_rating, rating_count = get_average_rating(active_movie)
         user_rating_text = f"⭐ {avg_rating}/5 ({rating_count} reviews)" if avg_rating else "No user ratings yet"
-        st.write(f"**📂 Category:** {active_cat}  |  **👥 Rating:** {user_rating_text}")
+        st.write(f"**👥 MOVIEZZ FLIX Rating:** {user_rating_text}")
 
         if details:
             st.write(f"**📅 Year:** {details.get('Year', 'N/A')}  |  **⭐ IMDb:** {details.get('imdbRating', 'N/A')}  |  **⏱️ Runtime:** {details.get('Runtime', 'N/A')}")
             st.write(f"**🎭 Genre:** {details.get('Genre', 'N/A')}")
-            st.write(f"**🎬 Director / Creator:** {details.get('Director', 'N/A')}")
+            st.write(f"**🎬 Director:** {details.get('Director', 'N/A')}")
             st.write(f"**🌟 Cast:** {details.get('Actors', 'N/A')}")
             st.write("**📝 Plot:**")
             st.write(details.get("Plot", "N/A"))
         elif not movie_df_match.empty:
             st.write(f"**🎭 Genre:** {movie_df_match['genre'].iloc[0]}")
 
-        with st.expander("📤 Share with Friends"):
-            share_link = raw_url if raw_url else yt_full_search
+        with st.expander("📤 Share This Movie with Friends"):
+            share_link = video_url if video_url else yt_full_search
             st.code(f"🍿 Watch '{active_movie}' ({chosen_lang}) on MOVIEZZ FLIX! 👉 {share_link}", language=None)
 
     # Ratings & Reviews
@@ -1258,7 +1190,7 @@ if active_movie:
     with rev_col1:
         with st.form(f"review_form_{active_movie}"):
             star_rating = st.slider("Your Rating", 1, 5, 5)
-            review_text = st.text_area("Review (optional)", placeholder="Super entertainment...")
+            review_text = st.text_area("Review (optional)", placeholder="Must watch...")
             if st.form_submit_button("Submit Review", use_container_width=True):
                 save_review(current_user, active_movie, star_rating, review_text)
                 st.success("Review saved!")
@@ -1275,13 +1207,33 @@ if active_movie:
         else:
             st.info("No reviews yet.")
 
-# ---------------- MOOD FILTER SLIDER (IF SELECTED) ----------------
+    # Similar Movies
+    st.markdown("### 🍿 More Like This")
+    recs = get_similar_movies(active_movie, movies, limit=6)
+    if not recs.empty:
+        rec_cols = st.columns(3)
+        for i, (_, row) in enumerate(recs.iterrows()):
+            rec_title = row["title"]
+            rec_data = get_movie_details(rec_title)
+            with rec_cols[i % 3]:
+                with st.container(border=True):
+                    if rec_data and rec_data.get("Poster") != "N/A":
+                        st.image(rec_data["Poster"], use_container_width=True)
+                    st.markdown(f"#### {rec_title}")
+                    st.caption(f"🎭 {row['genre']}")
+                    if st.button("▶ Open & Play", key=f"rec_btn_{rec_title}", use_container_width=True):
+                        st.session_state.selected_movie = rec_title
+                        st.session_state.resume_seconds = get_movie_progress(current_user, rec_title) * 60
+                        st.session_state.is_playing = True
+                        st.rerun()
+
+# ---------------- MOOD FILTER RESULTS (IF SELECTED) ----------------
 
 if st.session_state.active_mood != "All Moods":
     st.divider()
     m_hdr1, m_hdr2 = st.columns([5, 1])
     with m_hdr1:
-        st.markdown(f"## {st.session_state.active_mood} Picks ➡️")
+        st.markdown(f"## {st.session_state.active_mood} Picks")
     with m_hdr2:
         if st.button("Clear Mood", use_container_width=True):
             st.session_state.active_mood = "All Moods"
@@ -1290,75 +1242,173 @@ if st.session_state.active_mood != "All Moods":
     target_genres = MOOD_FILTERS[st.session_state.active_mood]
     pattern = "|".join(target_genres)
     mood_df = movies[movies["genre"].str.contains(pattern, case=False, na=False)]
-    render_horizontal_slider(mood_df, "mood_slide", saved_langs[0])
 
-# ---------------- CONTINUE WATCHING SLIDER ----------------
+    m_cols = st.columns(4)
+    for idx, (_, row) in enumerate(mood_df.iterrows()):
+        m_title = row["title"]
+        m_data = get_movie_details(m_title)
+        with m_cols[idx % 4]:
+            with st.container(border=True):
+                if m_data and m_data.get("Poster") != "N/A":
+                    st.image(m_data["Poster"], use_container_width=True)
+                st.markdown(f"**{m_title}**")
+                st.caption(f"🎭 {row['genre']}")
+                if st.button("▶ Watch Now", key=f"mood_card_{m_title}_{idx}", use_container_width=True):
+                    st.session_state.selected_movie = m_title
+                    st.session_state.selected_lang = saved_langs[0]
+                    st.session_state.resume_seconds = get_movie_progress(current_user, m_title) * 60
+                    st.session_state.is_playing = True
+                    st.rerun()
+
+# ---------------- SECTION 0: CONTINUE WATCHING ----------------
 
 if cw_list:
     st.divider()
-    st.markdown(f"## ⏯️ Continue Watching for {current_user} ➡️")
+    st.markdown(f"## ⏯️ Continue Watching for {current_user}")
 
-    cw_cols = st.columns(len(cw_list))
-    for idx, (cw_title, cw_lang, cw_mins) in enumerate(cw_list):
-        match_r = movies[movies["title"] == cw_title]
-        cw_cat = match_r["category"].iloc[0] if not match_r.empty else "Movie"
-        cw_poster = get_poster_url(cw_title, cw_cat)
-
-        with cw_cols[idx]:
-            st.markdown('<span class="slide-card-marker"></span>', unsafe_allow_html=True)
+    cw_cols = st.columns(4)
+    for idx, (cw_title, cw_lang, cw_mins) in enumerate(cw_list[:4]):
+        cw_data = get_movie_details(cw_title)
+        with cw_cols[idx % 4]:
             with st.container(border=True):
-                st.image(cw_poster, use_container_width=True)
+                if cw_data and cw_data.get("Poster") != "N/A":
+                    st.image(cw_data["Poster"], use_container_width=True)
                 st.markdown(f"**{cw_title}**")
                 if cw_mins > 0:
-                    st.caption(f"🌐 {cw_lang} • Paused at {cw_mins}m")
+                    st.caption(f"🌐 {cw_lang} • Paused at {cw_mins} mins")
                     st.progress(min(cw_mins / 150.0, 1.0))
                 else:
-                    st.caption(f"🌐 {cw_lang} • Started")
+                    st.caption(f"🌐 {cw_lang} • Started watching")
                     st.progress(0.1)
 
                 b1, b2 = st.columns([3, 1])
                 with b1:
-                    btn_txt = f"⏩ Resume" if cw_mins > 0 else f"▶ Resume"
-                    if st.button(btn_txt, key=f"cw_resume_{cw_title}_{idx}", use_container_width=True):
+                    btn_txt = f"⏩ Resume ({cw_mins}m)" if cw_mins > 0 else f"▶ Resume ({cw_lang})"
+                    if st.button(btn_txt, key=f"cw_resume_{cw_title}", use_container_width=True):
                         st.session_state.selected_movie = cw_title
                         st.session_state.selected_lang = cw_lang
                         st.session_state.resume_seconds = cw_mins * 60
                         st.session_state.is_playing = True
                         st.rerun()
                 with b2:
-                    if st.button("✖", key=f"cw_rem_{cw_title}_{idx}", help="Remove"):
+                    if st.button("✖", key=f"cw_rem_{cw_title}", help="Remove from Continue Watching"):
                         remove_continue_watching(current_user, cw_title)
                         st.rerun()
 
-# ---------------- HORIZONTAL SLIDING SECTIONS ----------------
+# ---------------- SECTION 1: PERSONALIZED RECOMMENDATIONS ----------------
 
-# 1. MOVIES (RECOMMENDED FIRST, THEN ALL MOVIES)
 st.divider()
-st.markdown("## 🎬 Recommended Movies ➡️")
-st.caption("👈 Swipe / slide sideways to browse all movies")
-movies_only_df = sort_by_user_prefs(movies[movies["category"].str.lower() == "movie"], saved_genres, saved_langs)
-render_horizontal_slider(movies_only_df, "movies_slide", saved_langs[0])
+st.markdown(f"## 🎯 Recommended For You ({', '.join(saved_genres)} • {', '.join(saved_langs)})")
 
-# 2. WEB SERIES
-st.divider()
-st.markdown("## 📺 Popular Web Series ➡️")
-st.caption("👈 Swipe / slide sideways to browse web series")
-series_only_df = sort_by_user_prefs(movies[movies["category"].str.lower() == "web series"], saved_genres, saved_langs)
-render_horizontal_slider(series_only_df, "series_slide", saved_langs[0])
+def render_movie_grid(df_to_render: pd.DataFrame, section_prefix: str, default_play_lang: str):
+    if df_to_render.empty:
+        st.info("No movies found in this section.")
+        return
 
-# 3. TV SERIALS
-st.divider()
-st.markdown("## 🎭 Daily TV Serials ➡️")
-st.caption("👈 Swipe / slide sideways for latest serial episodes")
-serials_only_df = movies[movies["category"].str.lower() == "serial"]
-render_horizontal_slider(serials_only_df, "serials_slide", saved_langs[0])
+    grid_cols = st.columns(4)
+    for idx, (_, row) in enumerate(df_to_render.iterrows()):
+        m_title = row["title"]
+        m_data = get_movie_details(m_title)
+        m_langs = list(get_available_languages(row).keys())
+        avg_r, _ = get_average_rating(m_title)
 
-# 4. JABARDASTH & COMEDY SHOWS
+        matching_langs = [l for l in saved_langs if l in m_langs]
+        play_lang = matching_langs[0] if matching_langs else default_play_lang
+
+        with grid_cols[idx % 4]:
+            with st.container(border=True):
+                if m_data and m_data.get("Poster") != "N/A":
+                    st.image(m_data["Poster"], use_container_width=True)
+                st.markdown(f"**{m_title}**")
+                st.caption(f"🎭 {row['genre']}")
+                if m_langs:
+                    st.caption(f"🌐 {' • '.join(m_langs)}")
+                if avg_r:
+                    st.caption(f"⭐ {avg_r}/5")
+                if st.button(f"▶ Watch ({play_lang})", key=f"{section_prefix}_{m_title}_{idx}", use_container_width=True):
+                    st.session_state.selected_movie = m_title
+                    st.session_state.selected_lang = play_lang
+                    st.session_state.resume_seconds = get_movie_progress(current_user, m_title) * 60
+                    st.session_state.is_playing = True
+                    st.rerun()
+
+if not recommended_df.empty:
+    render_movie_grid(recommended_df, "rec_feed", saved_langs[0])
+else:
+    st.info("No exact matches yet. Edit preferences in sidebar or explore below!")
+
+# ---------------- SECTION 2: TOP RATED BY COMMUNITY ----------------
+
+top_rated_rows = get_top_rated_movies(limit=4)
+if top_rated_rows:
+    st.divider()
+    st.markdown("## 🏆 Top Rated on MOVIEZZ FLIX")
+    tr_cols = st.columns(4)
+    for idx, (tr_title, tr_avg, tr_cnt) in enumerate(top_rated_rows):
+        tr_data = get_movie_details(tr_title)
+        with tr_cols[idx % 4]:
+            with st.container(border=True):
+                if tr_data and tr_data.get("Poster") != "N/A":
+                    st.image(tr_data["Poster"], use_container_width=True)
+                st.markdown(f"**#{idx + 1} {tr_title}**")
+                st.caption(f"⭐ {tr_avg}/5 ({tr_cnt} user ratings)")
+                if st.button("▶ Watch Top Pick", key=f"tr_btn_{tr_title}", use_container_width=True):
+                    st.session_state.selected_movie = tr_title
+                    st.session_state.selected_lang = saved_langs[0]
+                    st.session_state.resume_seconds = get_movie_progress(current_user, tr_title) * 60
+                    st.session_state.is_playing = True
+                    st.rerun()
+
+# ---------------- SECTION 3: SMART VIBE SEARCH & EXPLORE MORE ----------------
+
 st.divider()
-st.markdown("## 😂 Jabardasth & TV Comedy Shows ➡️")
-st.caption("👈 Swipe / slide sideways for Jabardasth, Extra Jabardasth & Dhee")
-jabardasth_only_df = movies[movies["category"].str.lower() == "jabardasth"]
-render_horizontal_slider(jabardasth_only_df, "jabardasth_slide", "Telugu")
+st.markdown("## 🎬 Smart Search & Explore More Movies")
+
+search_col, vibe_col, genre_col = st.columns([1.5, 1.5, 1])
+
+with search_col:
+    all_titles = sorted(movies["title"].unique().tolist())
+    quick_pick = st.selectbox(
+        "Quick Title Open",
+        options=[""] + all_titles,
+        format_func=lambda x: "🎯 Jump directly to a movie..." if x == "" else x,
+        label_visibility="collapsed"
+    )
+    if quick_pick:
+        if st.button(f"▶ Open '{quick_pick}'", use_container_width=True):
+            st.session_state.selected_movie = quick_pick
+            st.session_state.selected_lang = saved_langs[0]
+            st.session_state.resume_seconds = get_movie_progress(current_user, quick_pick) * 60
+            st.session_state.is_playing = True
+            st.rerun()
+
+with vibe_col:
+    vibe_query = st.text_input(
+        "Smart Vibe Search",
+        placeholder="🔍 Type mood or genre (e.g. horror thriller, sci-fi)...",
+        label_visibility="collapsed"
+    )
+
+with genre_col:
+    extra_genre = st.selectbox(
+        "Filter Genre",
+        options=["All Other Movies"] + AVAILABLE_GENRES,
+        label_visibility="collapsed"
+    )
+
+display_others = remaining_df if not remaining_df.empty else movies
+if extra_genre != "All Other Movies":
+    display_others = movies[movies["genre"].str.contains(extra_genre, case=False, na=False)]
+
+if vibe_query.strip():
+    words = [w.strip() for w in vibe_query.lower().split() if w.strip()]
+    mask = movies.apply(
+        lambda r: any(w in r["title"].lower() or w in r["genre"].lower() for w in words),
+        axis=1
+    )
+    display_others = movies[mask]
+
+render_movie_grid(display_others, "other_feed", saved_langs[0])
 
 # ---------------- FOOTER ----------------
 
@@ -1366,7 +1416,7 @@ st.divider()
 st.markdown("""
 <div style="text-align:center; padding:20px; color:#888;">
     <h3 style="color:#e50914 !important;">MOVIEZZ FLIX</h3>
-    Movies • Web Series • Serials • Jabardasth 🍿
+    Your Entertainment. Your World. 🍿
     <br><br>
     © 2026 MOVIEZZ FLIX
 </div>
